@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sigmaflux Mail — Dashboard (Dark)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@500;600&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --panel:#0a0909;
+    --card:#0c0a0b;
+    --stroke:rgba(255,255,255,.13);
+    --stroke-hi:rgba(255,255,255,.62);
+    --txt:#f3eff1;
+    --txt-2:#d3cacf;
+    --muted:#958a90;
+    --pink:#eeb2dc;
+    --pink-dot:#fcd3ef;
+    --line:#dbb6cf;
+    --green:#4fd67f;
+    --red:#ff6b7d;
+    --grad:radial-gradient(120% 160% at 18% 0%, #a3879a 0%, #6f5868 38%, #3d2e37 75%, #2a1f25 100%);
+    --font:'Poppins', system-ui, sans-serif;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    min-height:100vh;font-family:var(--font);color:var(--txt);
+    background:
+      radial-gradient(800px 520px at 50% 55%, rgba(98,62,82,.55) 0%, transparent 70%),
+      radial-gradient(1400px 900px at 50% 50%, #24171d 0%, #140d11 55%, #0a0708 100%);
+    padding:0;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+  svg{display:block}
+  .ico{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+  /* ---------- Shell ---------- */
+  .shell{
+    width:100%;min-height:100vh;
+    border-radius:0;padding:16px;
+    background:
+      radial-gradient(700px 400px at 12% 0%, rgba(255,255,255,.10), transparent 60%),
+      linear-gradient(155deg,#6b5c64 0%,#4f4249 28%,#3e3339 62%,#483b42 100%);
+    box-shadow:none;
+    display:grid;grid-template-columns:262px minmax(0,1fr);gap:16px;
+    animation:shellIn 1s var(--ease) both;
+  }
+
+  /* ---------- Sidebar ---------- */
+  .side{
+    background:var(--panel);border-radius:20px;padding:36px 0 30px;display:flex;flex-direction:column;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);position:sticky;top:16px;align-self:start;height:calc(100vh - 32px);min-height:600px;overflow-y:auto;scrollbar-width:none
+  }
+  .brand{display:flex;align-items:center;gap:10px;padding:0 30px;margin-bottom:46px}
+  .brand svg{width:24px;height:24px}
+  .brand b{font:600 19.5px 'Exo 2',sans-serif;letter-spacing:.6px}
+  .nav{position:relative;display:flex;flex-direction:column;gap:4px}
+  .nav a{
+    position:relative;z-index:1;display:flex;align-items:center;gap:15px;height:44px;padding:0 0 0 30px;
+    color:#e9e3e6;text-decoration:none;font-size:15.5px;font-weight:400;transition:color .25s, transform .3s var(--ease)
+  }
+  .nav a svg{width:20px;height:20px;opacity:.95}
+  .nav a:hover{transform:translateX(4px)}
+  .nav a.on{color:#fff}
+  .nav .pill{
+    position:absolute;left:12px;right:-14px;height:48px;top:0;border-radius:14px;z-index:0;
+    background:linear-gradient(90deg,#96798c 0%,#6d5665 40%,rgba(61,46,55,.85) 78%,rgba(30,22,27,0) 100%);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.22), 0 10px 26px -10px rgba(170,120,150,.55);
+    transition:transform .55s var(--ease);
+  }
+  .nav .pill::after{ /* sheen */
+    content:"";position:absolute;inset:0;border-radius:inherit;
+    background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.18) 45%,transparent 60%);
+    background-size:250% 100%;animation:sheen 4.5s ease-in-out infinite
+  }
+  .side .bottom{margin-top:auto}
+  .side .bottom a{font-size:16px;height:40px}
+
+  /* ---------- Main ---------- */
+  main{display:flex;flex-direction:column;gap:16px;min-width:0;padding:14px 0 0}
+  .head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:0 8px 0 0}
+  .head h1{margin:0;font-weight:400;font-size:28px;letter-spacing:.1px;line-height:1.2}
+  .head h1 span{color:var(--pink);background:linear-gradient(90deg,#f6c5e7,#d99cc6,#f6c5e7);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shine 6s linear infinite}
+  .head p{margin:4px 0 0;font-size:12.5px;color:var(--txt-2);font-weight:300}
+  .actions{display:flex;align-items:center;gap:6px}
+  .ibtn{width:44px;height:44px;border-radius:50%;background:#0b0909;display:grid;place-items:center;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);transition:.3s var(--ease);position:relative}
+  .ibtn svg{width:18px;height:18px}
+  .ibtn:hover{background:#1a1417;transform:translateY(-2px)}
+  .ibtn .dot{position:absolute;top:11px;right:12px;width:7px;height:7px;border-radius:50%;background:var(--pink);box-shadow:0 0 8px var(--pink)}
+  .user{display:flex;align-items:center;gap:12px;margin-left:16px}
+  .avatar{width:46px;height:46px;border-radius:50%;background:radial-gradient(circle at 30% 25%,#f5d6ea,#b78aa9 55%,#6c4c61);display:grid;place-items:center;font:600 15px var(--font);color:#2a1820;box-shadow:0 0 0 2px rgba(255,255,255,.12)}
+  .user b{display:block;font-weight:400;font-size:14.5px;line-height:1.2}
+  .user small{font-size:11.5px;color:var(--txt-2);font-weight:300}
+
+  .bar{display:flex;align-items:center;gap:16px;margin-top:10px}
+  .seg{display:flex;gap:3px}
+  .seg button{
+    position:relative;height:46px;padding:0 24px;border-radius:999px;background:#0b0909;font-size:16px;font-weight:400;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);overflow:hidden;transition:transform .3s var(--ease)
+  }
+  .seg button::before{content:"";position:absolute;inset:0;background:var(--grad);opacity:0;transition:opacity .45s var(--ease);border-radius:inherit;box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+  .seg button span{position:relative}
+  .seg button.on::before{opacity:1}
+  .seg button:hover{transform:translateY(-1px)}
+  .ask{
+    margin-left:auto;width:300px;height:46px;border-radius:999px;display:flex;align-items:center;gap:12px;padding:0 22px;
+    background:rgba(14,10,12,.78);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);transition:box-shadow .3s
+  }
+  .ask:focus-within{box-shadow:inset 0 0 0 1px rgba(238,178,220,.55),0 0 24px -6px rgba(238,178,220,.5)}
+  .ask svg{width:18px;height:18px;color:#d8ced3;flex:none}
+  .ask input{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--txt);font:400 15.5px var(--font)}
+  .ask input::placeholder{color:#ddd3d8}
+
+  /* ---------- Cards ---------- */
+  .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:auto 1fr;gap:16px}
+  .card{
+    position:relative;background:var(--card);border-radius:18px;padding:18px 16px;overflow:hidden;
+    box-shadow:inset 0 0 0 1px var(--stroke);transition:box-shadow .4s var(--ease), transform .4s var(--ease)
+  }
+  .card:hover{box-shadow:inset 0 0 0 1px rgba(238,178,220,.32),0 20px 40px -24px rgba(0,0,0,.8)}
+  .card h3{margin:0;font-weight:400;font-size:17px;letter-spacing:.1px}
+  .card .row-h{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .chip{
+    height:34px;padding:0 16px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--stroke-hi);
+    display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:400;position:relative;overflow:hidden;white-space:nowrap;transition:box-shadow .3s, background .3s
+  }
+  .chip::before{content:"";position:absolute;inset:0;background:var(--grad);opacity:0;transition:opacity .4s var(--ease)}
+  .chip span{position:relative}
+  .chip.on{box-shadow:none}
+  .chip.on::before{opacity:1}
+  .chip:hover:not(.on){box-shadow:inset 0 0 0 1px #fff;background:rgba(255,255,255,.04)}
+  .cbtn{width:34px;height:34px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--stroke-hi);display:grid;place-items:center;transition:.3s var(--ease)}
+  .cbtn svg{width:15px;height:15px}
+  .cbtn:hover{background:#fff;color:#0c0a0b}
+
+  .holding{
+    grid-column:1;grid-row:1;min-height:136px;display:flex;flex-direction:column;justify-content:space-between;
+    background:var(--card)
+  }
+  .holding::before{
+    content:"";position:absolute;inset:-40%;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(34% 30% at 72% 42%, rgba(176,134,160,.55), transparent 70%),
+      radial-gradient(30% 22% at 42% 78%, rgba(120,88,108,.40), transparent 70%);
+    animation:drift 9s ease-in-out infinite alternate
+  }
+  .holding > *{position:relative;z-index:1}
+  .holding .big{font-size:31px;font-weight:500;letter-spacing:.2px;margin-top:22px}
+  .holding .chip{height:32px;padding:0 14px}
+  .holding .cbtn{width:32px;height:32px}
+
+  .ai{
+    grid-column:1;grid-row:2;min-height:180px;text-align:center;padding:24px 22px 0;display:flex;flex-direction:column;align-items:center
+  }
+  .ai h3{font-size:16.5px}
+  .ai p{margin:12px 0 0;font-size:12.5px;line-height:1.55;color:var(--txt-2);font-weight:300;max-width:270px}
+  .arc{
+    position:absolute;left:50%;bottom:-292px;width:360px;height:360px;margin-left:-180px;border-radius:50%;pointer-events:none;
+    background:radial-gradient(circle at 50% 18%, rgba(242,176,222,.42) 0%, rgba(150,96,128,.22) 30%, rgba(40,26,34,0) 62%);
+    box-shadow:0 -12px 50px -10px rgba(236,165,212,.55), inset 0 18px 30px -12px rgba(255,210,240,.6);
+    border-top:1px solid rgba(255,214,240,.65);
+    animation:breathe 5s ease-in-out infinite
+  }
+  .glow-btn{
+    position:relative;z-index:1;margin:22px 0 18px;height:40px;padding:0 22px;border-radius:999px;font-size:14px;color:#fff;
+    background:linear-gradient(180deg,#d0a1c3 0%,#a77598 55%,#8c5f7f 100%);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.45), 0 10px 26px -6px rgba(214,150,195,.7);
+    transition:transform .3s var(--ease), box-shadow .3s
+  }
+  .glow-btn:hover{transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,.45), 0 16px 32px -6px rgba(214,150,195,.9)}
+
+  .mailboxes{grid-column:2;grid-row:1 / span 2;display:flex;flex-direction:column}
+  .mailboxes .chips{display:flex;gap:4px;margin:18px 0 8px}
+  .mailboxes .chip{height:34px;padding:0 14px;font-size:13.5px}
+  .mlist{list-style:none;margin:0;padding:0;flex:1}
+  .mlist li{
+    display:grid;grid-template-columns:24px minmax(0,1fr) auto;align-items:center;gap:12px;padding:13px 2px;
+    border-bottom:1px solid rgba(255,255,255,.09);animation:rowIn .55s var(--ease) backwards;animation-delay:calc(var(--d,0) * 70ms)
+  }
+  .mlist li:last-child{border-bottom:0}
+  .mlist li svg{width:22px;height:22px;color:#a69ba1}
+  .mlist b{display:block;font-weight:400;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mlist small{display:block;font-size:10.5px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mlist .v{text-align:right;font-size:13.5px}
+  .mlist .v small{font-size:11px;color:var(--green)}
+  .mlist .v small.neg{color:var(--red)}
+  .mlist li{transition:background .25s}
+  .mlist li:hover{background:linear-gradient(90deg,transparent,rgba(255,255,255,.035),transparent)}
+
+  .domains{grid-column:3;grid-row:1 / span 2;display:flex;flex-direction:column}
+  .domains .acts{display:flex;gap:6px}
+  .dgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px;flex:1}
+  .dcard{
+    border-radius:16px;padding:14px 12px 12px;display:flex;flex-direction:column;
+    background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.01));
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.2);transition:transform .4s var(--ease), box-shadow .4s;
+    animation:rowIn .6s var(--ease) backwards;animation-delay:calc(var(--d,0) * 90ms + 300ms)
+  }
+  .dcard:hover{transform:translateY(-3px);box-shadow:inset 0 0 0 1px rgba(238,178,220,.5),0 14px 26px -16px rgba(238,178,220,.5)}
+  .dcard .val{font-size:15.5px;font-weight:500}
+  .dcard .chg{font-size:10.5px;color:var(--green);margin-top:2px}
+  .dcard .chg.neg{color:var(--red)}
+  .dcard svg{width:22px;height:22px;color:#a69ba1;margin-top:auto}
+  .dcard .foot{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px;font-size:10.5px;gap:4px}
+  .dcard .foot span{color:var(--txt-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dcard .foot em{font-style:normal;white-space:nowrap;color:var(--txt-2)}
+  .dcard .foot em b{font-weight:600;color:var(--txt);margin-left:3px}
+
+  .perf{padding:20px 16px 12px;flex:1;display:flex;flex-direction:column}
+  .perf .ranges{display:flex;gap:3px}
+  .perf .chip{width:54px;justify-content:center;padding:0;height:36px;font-size:14px}
+  .plot{position:relative;flex:1;min-height:236px;margin-top:6px}
+  .plot > svg{position:absolute;inset:0;overflow:visible}
+  .plot .yl,.plot .xl{font:400 11.5px var(--font);fill:#e3dce0}
+  .plot .lineP{transition:stroke-dashoffset 1.8s var(--ease)}
+  .plot .areaP{transition:opacity 1.2s ease .5s}
+  .guide{position:absolute;width:0;border-left:1.5px dashed rgba(255,255,255,.75);pointer-events:none;transition:left .18s ease-out, top .18s ease-out, height .18s ease-out}
+  .pdot{
+    position:absolute;width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border-radius:50%;background:var(--pink-dot);pointer-events:none;
+    box-shadow:0 0 0 4px rgba(252,211,239,.22),0 0 22px 4px rgba(250,170,225,.75);transition:left .18s ease-out, top .18s ease-out;
+    animation:pulse 2.2s ease-in-out infinite
+  }
+  .tip{
+    position:absolute;width:172px;padding:14px 14px 13px;border-radius:12px;pointer-events:none;
+    background:rgba(30,25,28,.94);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 34px -12px rgba(0,0,0,.8);
+    backdrop-filter:blur(8px);transition:left .18s ease-out, top .18s ease-out
+  }
+  .tip .d{display:flex;justify-content:space-between;font-size:11.5px;color:#d9d0d5}
+  .tip .d i{font-style:normal;letter-spacing:1px;color:#a59aa0}
+  .tip .r{display:flex;justify-content:space-between;align-items:center;margin-top:16px}
+  .tip .r b{font-weight:500;font-size:15.5px}
+  .badge{font-size:10.5px;color:var(--green);background:rgba(79,214,127,.12);box-shadow:inset 0 0 0 1px rgba(79,214,127,.3);border-radius:6px;padding:2px 6px;display:inline-flex;align-items:center;gap:3px}
+  .badge.neg{color:var(--red);background:rgba(255,107,125,.12);box-shadow:inset 0 0 0 1px rgba(255,107,125,.3)}
+  .badge svg{width:10px;height:10px}
+
+  /* ---------- Entry ---------- */
+  .in{opacity:0;transform:translateY(16px) scale(.985);animation:rise .9s var(--ease) forwards;animation-delay:calc(var(--d,0) * 80ms + 250ms)}
+
+  @keyframes rise{to{opacity:1;transform:none}}
+  @keyframes rowIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @keyframes shellIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+  @keyframes sheen{0%,100%{background-position:120% 0}50%{background-position:-20% 0}}
+  @keyframes shine{to{background-position:200% 0}}
+  @keyframes drift{0%{transform:translate(0,0)}100%{transform:translate(-8%,6%)}}
+  @keyframes breathe{0%,100%{opacity:.85;transform:translateY(0)}50%{opacity:1;transform:translateY(-6px)}}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 4px rgba(252,211,239,.22),0 0 22px 4px rgba(250,170,225,.75)}50%{box-shadow:0 0 0 8px rgba(252,211,239,.10),0 0 30px 8px rgba(250,170,225,.9)}}
+
+  /* ---------- Responsive ---------- */
+  @media (max-width:1120px){
+    .shell{grid-template-columns:86px minmax(0,1fr)}
+    .brand b,.nav a span{display:none}
+    .brand{padding:0;justify-content:center}
+    .nav a{padding:0;justify-content:center}
+    .nav .pill{left:12px;right:12px}
+    .grid{grid-template-columns:1fr 1fr}
+    .domains{grid-column:1 / span 2;grid-row:3}
+    .ask{width:240px}
+  }
+  @media (max-width:720px){
+    body{padding:0}
+    .shell{grid-template-columns:1fr;padding:12px}
+    .side{position:relative;top:0;height:auto;min-height:0;flex-direction:row;padding:10px;align-items:center;overflow:visible}
+    .brand{margin:0 10px 0 6px}
+    .nav{flex-direction:row}
+    .nav .pill,.side .bottom{display:none}
+    .nav a{width:40px;height:40px}
+    .nav a:nth-child(n+6){display:none}
+    .nav a.on{background:var(--grad);border-radius:12px}
+    .head{flex-direction:column}
+    .user{margin-left:6px}
+    .bar{flex-wrap:wrap}
+    .ask{width:100%}
+    .grid{grid-template-columns:1fr}
+    .holding,.ai,.mailboxes,.domains{grid-column:1;grid-row:auto}
+    .perf .row-h{flex-direction:column;align-items:flex-start;gap:12px}
+    .perf .chip{width:46px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    .in{opacity:1;transform:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ===== Sidebar ===== -->
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"><path d="M3 5h18v14H3z"/><path d="M3.5 5.5 12 12l8.5-6.5"/></svg>
+      <b>Sigmaflux Mail</b>
+    </div>
+    <nav class="nav" id="nav">
+      <div class="pill" id="pill"></div>
+      <a href="#" class="on"><svg class="ico" data-i="dash"></svg><span>Dashboard</span></a>
+      <a href="#"><svg class="ico" data-i="send"></svg><span>Campaigns</span></a>
+      <a href="#"><svg class="ico" data-i="flow"></svg><span>Sequences</span></a>
+      <a href="#"><svg class="ico" data-i="file"></svg><span>Templates</span></a>
+      <a href="#"><svg class="ico" data-i="inbox"></svg><span>Mailboxes</span></a>
+      <a href="#"><svg class="ico" data-i="globe"></svg><span>Domains</span></a>
+      <a href="#"><svg class="ico" data-i="flame"></svg><span>Warmup</span></a>
+      <a href="#"><svg class="ico" data-i="spark"></svg><span>Lead Finder</span></a>
+      <a href="#"><svg class="ico" data-i="mail"></svg><span>Unibox</span></a>
+    </nav>
+    <nav class="nav bottom">
+      <a href="#"><svg class="ico" data-i="gear"></svg><span>Settings</span></a>
+      <a href="#"><svg class="ico" data-i="help"></svg><span>Support</span></a>
+    </nav>
+  </aside>
+
+  <!-- ===== Main ===== -->
+  <main>
+    <header class="head in" style="--d:0">
+      <div>
+        <h1>Welcome, <span>Aarav</span></h1>
+        <p>Here's your outreach overview</p>
+      </div>
+      <div class="actions">
+        <button class="ibtn" aria-label="Notifications"><svg class="ico" data-i="bell"></svg><span class="dot"></span></button>
+        <button class="ibtn" aria-label="Settings"><svg class="ico" data-i="gear"></svg></button>
+        <div class="user">
+          <div class="avatar">AM</div>
+          <div><b>Aarav Mehta</b><small>aarav@sigmaflux.io</small></div>
+        </div>
+      </div>
+    </header>
+
+    <div class="bar in" style="--d:1">
+      <div class="seg" id="seg">
+        <button><span>Overview</span></button>
+        <button class="on"><span>Campaigns</span></button>
+        <button><span>Warmup</span></button>
+      </div>
+      <label class="ask"><svg class="ico" data-i="mic"></svg><input id="ask" placeholder="Ask sigma.ai anything"></label>
+    </div>
+
+    <section class="grid">
+      <!-- Emails sent -->
+      <article class="card holding in" style="--d:2">
+        <div class="row-h">
+          <h3>Emails Sent</h3>
+          <div style="display:flex;gap:6px">
+            <button class="chip"><span>6M</span></button>
+            <button class="cbtn" aria-label="Change period"><svg class="ico" data-i="down"></svg></button>
+          </div>
+        </div>
+        <div class="big" data-count="48204">0</div>
+      </article>
+
+      <!-- AI lead agent -->
+      <article class="card ai in" style="--d:3">
+        <h3>Leads Powered by AI</h3>
+        <p>Describe your ideal customer — the agent searches Apollo, enriches and verifies every lead for you.</p>
+        <div class="arc"></div>
+        <button class="glow-btn">Open Lead Agent</button>
+      </article>
+
+      <!-- Mailboxes -->
+      <article class="card mailboxes in" style="--d:4">
+        <h3>Mailboxes</h3>
+        <div class="chips" id="mbTabs">
+          <button class="chip on" data-k="top"><span>Top Health</span></button>
+          <button class="chip" data-k="warm"><span>Warming</span></button>
+          <button class="chip" data-k="issues"><span>Issues</span></button>
+        </div>
+        <ul class="mlist" id="mlist"></ul>
+      </article>
+
+      <!-- Domains -->
+      <article class="card domains in" style="--d:5">
+        <div class="row-h">
+          <h3>Domains</h3>
+          <div class="acts">
+            <button class="chip"><span>See all</span></button>
+            <button class="cbtn" aria-label="Open domains"><svg class="ico" data-i="upright"></svg></button>
+          </div>
+        </div>
+        <div class="dgrid">
+          <div class="dcard" style="--d:0"><div class="val">98.4%</div><div class="chg">+1.2 (0.7%)</div><svg class="ico" data-i="shield"></svg><div class="foot"><span>sigmaflux.io</span><em>Boxes<b>6</b></em></div></div>
+          <div class="dcard" style="--d:1"><div class="val">96.1%</div><div class="chg">+0.8 (0.4%)</div><svg class="ico" data-i="globe"></svg><div class="foot"><span>getsigma.co</span><em>Boxes<b>4</b></em></div></div>
+          <div class="dcard" style="--d:2"><div class="val">91.7%</div><div class="chg">+2.3 (1.1%)</div><svg class="ico" data-i="flame"></svg><div class="foot"><span>sigmamail.in</span><em>Boxes<b>3</b></em></div></div>
+          <div class="dcard" style="--d:3"><div class="val">88.2%</div><div class="chg neg">−2.1 (1.4%)</div><svg class="ico" data-i="alert"></svg><div class="foot"><span>trysigma.net</span><em>Boxes<b>2</b></em></div></div>
+        </div>
+      </article>
+    </section>
+
+    <!-- Performance -->
+    <article class="card perf in" style="--d:6">
+      <div class="row-h">
+        <h3>Sending Performance</h3>
+        <div class="ranges" id="ranges">
+          <button class="chip" data-r="1D"><span>1D</span></button>
+          <button class="chip" data-r="1W"><span>1W</span></button>
+          <button class="chip" data-r="1M"><span>1M</span></button>
+          <button class="chip" data-r="6M"><span>6M</span></button>
+          <button class="chip on" data-r="1Y"><span>1Y</span></button>
+        </div>
+      </div>
+      <div class="plot" id="plot"></div>
+    </article>
+  </main>
+</div>
+
+<script>
+/* ---------- Icons ---------- */
+const I = {
+  dash:'<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 8.5 8.5"/><circle cx="12" cy="12" r="3.5"/>',
+  send:'<path d="M21.5 2.5 10.8 13.2"/><path d="M21.5 2.5 14.8 21.5l-4-8.3-8.3-4z"/>',
+  flow:'<rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/><path d="M6.5 10v3.5a2 2 0 0 0 2 2H14"/>',
+  file:'<path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8.5 13h7M8.5 17h5"/>',
+  inbox:'<path d="M21.5 12.5h-5.5l-2 3h-4l-2-3H2.5"/><path d="M5.6 5.2 2.5 12.5v5a2 2 0 0 0 2 2h15a2 2 0 0 0 2-2v-5l-3.1-7.3a1.6 1.6 0 0 0-1.5-1H7.1a1.6 1.6 0 0 0-1.5 1z"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  flame:'<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.4-.5-2-1-3-1.1-2.1-.2-4 2-6 .5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.2.4-2.3 1-3.3.3 1.5 1.3 2.8 2.5 2.8z"/>',
+  spark:'<path d="M11 3l1.8 4.7L17.5 9.5l-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8z"/><path d="M18.5 14.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>',
+  mail:'<rect x="2.5" y="4.5" width="19" height="15" rx="2.2"/><path d="m3.2 6.2 8.8 7 8.8-7"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  help:'<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 10.2c0-1 .8-1.7 1.8-1.7s1.7.7 1.7 1.6c0 1.5-3.4 2.3-3.4 4.4h3.5M14 8.5v4h3M16.2 8.5v7"/>',
+  bell:'<path d="M6 8.5a6 6 0 0 1 12 0c0 6.5 2.8 8.5 2.8 8.5H3.2S6 15 6 8.5"/><path d="M10.2 20.5a2 2 0 0 0 3.6 0"/>',
+  mic:'<rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M18.5 11a6.5 6.5 0 0 1-13 0M12 17.5V21"/>',
+  down:'<path d="m6 9 6 6 6-6"/>',
+  upright:'<path d="M7 17 17 7M8.5 7H17v8.5"/>',
+  shield:'<path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6z"/><path d="m8.8 12 2.3 2.3 4.2-4.6"/>',
+  alert:'<path d="M10.3 3.9 2.4 17.6A2 2 0 0 0 4.1 20.6h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4M12 17h.01"/>',
+  server:'<rect x="3" y="3.5" width="18" height="7" rx="2"/><rect x="3" y="13.5" width="18" height="7" rx="2"/><path d="M7 7h.01M7 17h.01"/>',
+  ms:'<rect x="3.5" y="3.5" width="7.5" height="7.5" rx=".6"/><rect x="13" y="3.5" width="7.5" height="7.5" rx=".6"/><rect x="3.5" y="13" width="7.5" height="7.5" rx=".6"/><rect x="13" y="13" width="7.5" height="7.5" rx=".6"/>',
+  g:'<path d="M20 11.2h-8v3.2h4.6A5 5 0 1 1 15.4 8.2l2.3-2.3A8.3 8.3 0 1 0 20.3 12c0-.3 0-.5-.3-.8z"/>',
+  up:'<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  dn:'<path d="M3 7l6 6 4-4 8 8"/><path d="M15 17h6v-6"/>'
+};
+function paintIcons(root=document){
+  root.querySelectorAll('[data-i]').forEach(s=>{ s.setAttribute('viewBox','0 0 24 24'); s.innerHTML = I[s.dataset.i]||''; });
+}
+paintIcons();
+
+/* release entry animation so hover transforms work */
+document.addEventListener('animationend', e=>{
+  if(e.animationName==='rise' && e.target.classList.contains('in')) e.target.classList.remove('in');
+});
+
+/* ---------- Sidebar active pill ---------- */
+const nav = document.getElementById('nav'), pill = document.getElementById('pill');
+function movePill(a){ pill.style.transform = `translateY(${a.offsetTop - 2}px)`; }
+movePill(nav.querySelector('a.on'));
+nav.querySelectorAll('a').forEach(a=>a.onclick=e=>{
+  e.preventDefault(); nav.querySelectorAll('a').forEach(x=>x.classList.toggle('on',x===a)); movePill(a);
+});
+
+/* ---------- Segmented tabs ---------- */
+const seg = document.getElementById('seg');
+seg.onclick = e=>{ const b=e.target.closest('button'); if(!b) return; seg.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); };
+
+/* ---------- Typing placeholder ---------- */
+(()=>{
+  const el = document.getElementById('ask');
+  const lines = ['Ask sigma.ai anything','Manufacturers in India, 30+','Write a SaaS follow-up','Why did trysigma.net drop?'];
+  let li=0, ci=lines[0].length, dir=-1, hold=60;
+  setInterval(()=>{
+    if(document.activeElement===el || el.value) return;
+    if(hold>0){ hold--; return; }
+    ci += dir;
+    if(ci<=0){ dir=1; li=(li+1)%lines.length; }
+    if(ci>=lines[li].length){ dir=-1; hold=55; }
+    el.placeholder = lines[li].slice(0,Math.max(0,ci)) || ' ';
+  }, 45);
+})();
+
+/* ---------- Count-up ---------- */
+document.querySelectorAll('[data-count]').forEach(el=>{
+  const to=+el.dataset.count, t0=performance.now()+500, dur=1500;
+  const tick=now=>{ const p=Math.min(1,Math.max(0,(now-t0)/dur)); el.textContent=Math.round(to*(1-Math.pow(1-p,4))).toLocaleString('en-US'); if(p<1) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+});
+
+/* ---------- Mailboxes list ---------- */
+const MB = {
+  top:[
+    ['g','sales@sigmaflux.io','Google · Health 98','1,240','+16.31%'],
+    ['ms','events@sigmaflux.io','Microsoft 365 · Health 96','1,028','+8.11%'],
+    ['server','growth@getsigma.co','SMTP · Health 95','851','+4.89%'],
+    ['g','talent@sigmaflux.io','Google · Health 93','211','+2.12%'],
+  ],
+  warm:[
+    ['g','hello@sigmamail.in','Warmup · Day 12 of 30','38/day','+4/day'],
+    ['ms','team@sigmamail.in','Warmup · Day 8 of 30','26/day','+3/day'],
+    ['server','info@trysigma.net','Warmup · Day 5 of 30','14/day','+2/day'],
+    ['g','ops@getsigma.co','Warmup · Day 2 of 30','6/day','+2/day'],
+  ],
+  issues:[
+    ['server','ai@trysigma.net','SMTP · Auth failed','Paused','−100%'],
+    ['g','support@trysigma.net','DMARC record missing','312','−9.40%'],
+    ['ms','sales@trysigma.net','Spam rate 4.1%','198','−6.25%'],
+  ]
+};
+const mlist = document.getElementById('mlist');
+function renderMB(k){
+  mlist.innerHTML = MB[k].map((r,i)=>`
+    <li style="--d:${i}">
+      <svg class="ico" data-i="${r[0]}"></svg>
+      <div><b>${r[1]}</b><small>${r[2]}</small></div>
+      <div class="v">${r[3]}<small class="${r[4].startsWith('−')?'neg':''}">${r[4]}</small></div>
+    </li>`).join('');
+  paintIcons(mlist);
+}
+renderMB('top');
+const mbTabs = document.getElementById('mbTabs');
+mbTabs.onclick = e=>{ const b=e.target.closest('button'); if(!b) return; mbTabs.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); renderMB(b.dataset.k); };
+
+/* ---------- Performance chart ---------- */
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const ord = d => d + (['th','st','nd','rd'][(d%100-20)%10] || ['th','st','nd','rd'][d%100] || 'th');
+const fmtDate = dt => `${ord(dt.getDate())} ${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
+function gen(n, seed, base, amp){
+  let s=seed; const rnd=()=> (s=(s*9301+49297)%233280)/233280;
+  const ph=[rnd()*6,rnd()*6,rnd()*6];
+  return Array.from({length:n},(_,i)=>{
+    const t=i/(n-1);
+    return Math.max(1, base + amp*(Math.sin(t*6.3+ph[0])*.5 + Math.sin(t*13+ph[1])*.3 + Math.sin(t*29+ph[2])*.12) + (rnd()-.5)*amp*.25);
+  });
+}
+const yearV=[19.6,19.2,18.4,17.0,15.2,13.6,13.0,13.8,13.2,13.6,14.4,14.0,14.8,15.4,15.0,14.6,14.2,14.8,14.4,13.6,12.6,13.05,16.2,15.6,16.6,15.8,15.0,15.6,15.2,16.4,17.6,17.8,17.4,16.0,15.2,14.6,15.0,14.2,13.6,9.4,9.0,9.6,10.0,10.6,10.2,9.0,8.2,7.0];
+const start = new Date(2026,0,1);
+const R = {
+  '1Y':{v:yearV, x:MONTHS, max:20, ticks:[20,15,10,5,0], unit:'k', date:i=>fmtDate(new Date(+start + i*(364/(yearV.length-1))*864e5)), def:21},
+  '6M':{v:gen(26,7,12,6), x:['Jun','Jul','Aug','Sep','Oct','Nov'], max:20, ticks:[20,15,10,5,0], unit:'k', date:i=>fmtDate(new Date(2026,5,1+i*7)), def:12},
+  '1M':{v:gen(30,3,2.2,1.2).map(v=>v*0.9), x:['1','5','10','15','20','25','30'], max:4, ticks:[4,3,2,1,0], unit:'k', date:i=>fmtDate(new Date(2026,9,1+i)), def:14},
+  '1W':{v:[1.8,2.6,3.1,2.2,3.5,1.4,.9], x:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], max:4, ticks:[4,3,2,1,0], unit:'k', date:i=>fmtDate(new Date(2026,10,9+i)), def:4},
+  '1D':{v:gen(24,11,140,90).map((v,i)=> i<7||i>21 ? v*.25 : v), x:['00:00','04:00','08:00','12:00','16:00','20:00','24:00'], max:300, ticks:[300,225,150,75,0], unit:'', date:i=>`${String(i).padStart(2,'0')}:00 · 16th Nov`, def:11}
+};
+let cur='1Y';
+
+function monotone(p){
+  const n=p.length, dx=[], m=[], t=[];
+  for(let i=0;i<n-1;i++){ dx[i]=p[i+1][0]-p[i][0]; m[i]=(p[i+1][1]-p[i][1])/dx[i]; }
+  t[0]=m[0]; t[n-1]=m[n-2];
+  for(let i=1;i<n-1;i++) t[i] = m[i-1]*m[i]<=0 ? 0 : 3*(dx[i-1]+dx[i])/((2*dx[i]+dx[i-1])/m[i-1]+(dx[i]+2*dx[i-1])/m[i]);
+  let d=`M${p[0][0]},${p[0][1]}`;
+  for(let i=0;i<n-1;i++){ const h=dx[i]/3; d+=` C${p[i][0]+h},${p[i][1]+t[i]*h} ${p[i+1][0]-h},${p[i+1][1]-t[i+1]*h} ${p[i+1][0]},${p[i+1][1]}`; }
+  return d;
+}
+
+const plot = document.getElementById('plot');
+let geo = null;
+function renderPerf(){
+  const W=plot.clientWidth, H=plot.clientHeight, L=48, Rr=6, T=12, B=36;
+  const c=R[cur], n=c.v.length;
+  const px=i=> L + i*(W-L-Rr)/(n-1);
+  const py=v=> T + (H-T-B)*(1 - v/c.max);
+  const pts=c.v.map((v,i)=>[px(i),py(v)]);
+  const line=monotone(pts);
+  const area=`${line} L${px(n-1)},${H-B} L${px(0)},${H-B} Z`;
+  let s=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    <defs>
+      <linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#c79bb8" stop-opacity=".45"/>
+        <stop offset=".6" stop-color="#8a6079" stop-opacity=".16"/>
+        <stop offset="1" stop-color="#4a3341" stop-opacity="0"/>
+      </linearGradient>
+      <filter id="lg" x="-5%" y="-30%" width="110%" height="160%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>`;
+  c.ticks.forEach(tk=>{
+    const y=py(tk);
+    s+=`<line x1="${L}" x2="${W-Rr}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,.06)"/>`;
+    s+=`<text class="yl" x="${L-14}" y="${y+4}" text-anchor="end">${tk===0?0:tk+c.unit}</text>`;
+  });
+  c.x.forEach((lab,j)=>{ const x = L+14 + j*(W-L-Rr-40)/(c.x.length-1); s+=`<text class="xl" x="${x}" y="${H-8}" text-anchor="middle">${lab}</text>`; });
+  s+=`<path class="areaP" d="${area}" fill="url(#ag)" opacity="0"/>`;
+  s+=`<path class="lineP" d="${line}" fill="none" stroke="#dcb6cf" stroke-width="2" filter="url(#lg)" stroke-linecap="round"/>`;
+  s+=`</svg><div class="guide"></div><div class="pdot"></div>
+      <div class="tip"><div class="d"><span class="td"></span><i>•••</i></div><div class="r"><b class="tv"></b><span class="badge"><svg class="ico" data-i="up"></svg><em class="tb" style="font-style:normal"></em></span></div></div>`;
+  plot.innerHTML=s;
+  paintIcons(plot);
+
+  const lp=plot.querySelector('.lineP'), len=lp.getTotalLength();
+  lp.style.strokeDasharray=len; lp.style.strokeDashoffset=len;
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ lp.style.strokeDashoffset=0; plot.querySelector('.areaP').style.opacity=1; }));
+
+  geo={W,H,L,Rr,B,px,py,n,c};
+  setHover(c.def, true);
+}
+
+function setHover(i){
+  if(!geo) return;
+  const {W,H,B,px,py,c}=geo;
+  i=Math.max(0,Math.min(geo.n-1,i));
+  const x=px(i), y=py(c.v[i]);
+  const g=plot.querySelector('.guide'), d=plot.querySelector('.pdot'), t=plot.querySelector('.tip');
+  g.style.left=x+'px'; g.style.top=y+'px'; g.style.height=(H-B-y)+'px';
+  d.style.left=x+'px'; d.style.top=y+'px';
+  const tw=172, th=82;
+  let tx=x-tw/2; tx=Math.max(0,Math.min(W-tw,tx));
+  let ty=y-th-20; if(ty<-30) ty=y+20;
+  t.style.left=tx+'px'; t.style.top=ty+'px';
+  const val = c.unit==='k' ? Math.round(c.v[i]*1000) : Math.round(c.v[i]);
+  const prev = c.v[Math.max(0,i-1)], ch = i ? ((c.v[i]-prev)/prev*100) : 0;
+  t.querySelector('.td').textContent=c.date(i);
+  t.querySelector('.tv').textContent=val.toLocaleString('en-US');
+  const bd=t.querySelector('.badge');
+  bd.classList.toggle('neg', ch<0);
+  bd.querySelector('svg').innerHTML = I[ch<0?'dn':'up'];
+  t.querySelector('.tb').textContent=(ch<0?'':'+')+ch.toFixed(1)+'%';
+}
+
+plot.addEventListener('mousemove', e=>{
+  if(!geo) return;
+  const r=plot.getBoundingClientRect(), x=e.clientX-r.left;
+  setHover(Math.round((x-geo.L)/(geo.W-geo.L-geo.Rr)*(geo.n-1)));
+});
+plot.addEventListener('mouseleave', ()=> geo && setHover(geo.c.def));
+
+const ranges=document.getElementById('ranges');
+ranges.onclick=e=>{ const b=e.target.closest('button'); if(!b) return; ranges.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); cur=b.dataset.r; renderPerf(); };
+
+setTimeout(()=>{ renderPerf(); let last=plot.clientWidth+'x'+plot.clientHeight; new ResizeObserver(()=>{ const k=plot.clientWidth+'x'+plot.clientHeight; if(k!==last){ last=k; clearTimeout(rz); rz=setTimeout(renderPerf,120); } }).observe(plot); }, 700);
+let rz; addEventListener('resize',()=>{ clearTimeout(rz); rz=setTimeout(renderPerf,120); });
+</script>
+</body>
+</html>

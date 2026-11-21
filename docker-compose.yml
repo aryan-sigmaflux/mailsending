@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sfmail-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sfmail
+      POSTGRES_PASSWORD: sfmail_password
+      POSTGRES_DB: sfmail
+    ports:
+      - '5440:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sfmail -d sfmail']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: sfmail-redis
+    restart: unless-stopped
+    ports:
+      - '6390:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

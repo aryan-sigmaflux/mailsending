@@ -1,0 +1,82 @@
+# Production stack. Run from the repo root:
+#   docker compose -p sfmail -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+# Postgres and Redis are internal only (no host ports). Only the web app and API are published.
+name: sfmail
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sfmail-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sfmail
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: sfmail
+    volumes:
+      - sfmail_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sfmail -d sfmail']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [sfmail]
+
+  redis:
+    image: redis:7-alpine
+    container_name: sfmail-redis
+    restart: unless-stopped
+    volumes:
+      - sfmail_redis:/data
+    networks: [sfmail]
+
+  api:
+    build: ../apps/api
+    image: sfmail-api
+    container_name: sfmail-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sfmail:${POSTGRES_PASSWORD}@postgres:5432/sfmail
+      REDIS_URL: redis://redis:6379/0
+      RUN_MIGRATIONS: '1'
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    ports:
+      - '${API_PORT:-8010}:8000'
+    networks: [sfmail]
+
+  worker:
+    image: sfmail-api
+    container_name: sfmail-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sfmail:${POSTGRES_PASSWORD}@postgres:5432/sfmail
+      REDIS_URL: redis://redis:6379/0
+      RUN_MIGRATIONS: '0'
+    command: ['python', '-m', 'app.worker']
+    depends_on:
+      api: { condition: service_started }
+    networks: [sfmail]
+
+  web:
+    build:
+      context: ../apps/web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_URL}/api/v1
+    image: sfmail-web
+    container_name: sfmail-web
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - '${WEB_PORT:-3010}:3010'
+    networks: [sfmail]
+
+volumes:
+  sfmail_pg:
+  sfmail_redis:
+
+networks:
+  sfmail:
+    name: sfmail
