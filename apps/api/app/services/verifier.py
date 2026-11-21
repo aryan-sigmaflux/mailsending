@@ -36,12 +36,13 @@ async def _smtp_probe(mx_host: str, emails: list[str]) -> dict[str, tuple[int, s
     client = aiosmtplib.SMTP(hostname=mx_host, port=25, timeout=settings.VERIFIER_SMTP_TIMEOUT, start_tls=False)
     await client.connect()
     try:
-        await client.ehlo(settings.VERIFIER_HELO_DOMAIN)
+        await client.ehlo(hostname=settings.VERIFIER_HELO_DOMAIN)
         if client.supports_extension("starttls"):
             try:
-                await client.starttls()
-                await client.ehlo(settings.VERIFIER_HELO_DOMAIN)
-            except aiosmtplib.SMTPException:
+                # Probe only sends RCPT (no message data) — many MX certs don't match their hostname.
+                await client.starttls(validate_certs=False)
+                await client.ehlo(hostname=settings.VERIFIER_HELO_DOMAIN)
+            except (aiosmtplib.SMTPException, OSError):
                 pass
         await client.mail(settings.VERIFIER_MAIL_FROM)
         for email in emails:
@@ -108,6 +109,9 @@ async def verify_email(email: str) -> dict:
         codes = await asyncio.wait_for(_smtp_probe(mx_host, [normalized, probe_addr]), timeout=settings.VERIFIER_SMTP_TIMEOUT * 2)
     except (aiosmtplib.SMTPException, OSError, asyncio.TimeoutError) as e:
         result.update(status="unknown", reason=f"smtp_unreachable: {type(e).__name__}")
+        return result
+    except Exception as e:  # noqa: BLE001 — never 500 on an odd server; report unknown instead
+        result.update(status="unknown", reason=f"smtp_error: {type(e).__name__}")
         return result
 
     code, msg = codes.get(normalized, (0, ""))
