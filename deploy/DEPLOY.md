@@ -10,33 +10,21 @@ docker compose -p sfmail -f deploy/docker-compose.prod.yml --env-file deploy/.en
 It can also be started by hand from the repo's **Actions** tab (Deploy to VPS → Run workflow).
 `deploy/.env` lives only on the server and is never touched by the deploy.
 
-## Ports on this server
+## How traffic flows
 
-BillionMail already uses 25, 465, 587, 143, 993, 8080 and 41443. This stack uses:
+```
+https://sendharbor.sigmaflux.in ── host nginx (80/443, certbot TLS)
+     /api/*, /health  → 127.0.0.1:8010  (sfmail-api)
+     everything else  → 127.0.0.1:3010  (sfmail-web)
+```
 
-| Port | What | Exposed |
-|---|---|---|
-| 3010 | web (Next.js) | `BIND_ADDR` (0.0.0.0 until HTTPS is on, then 127.0.0.1) |
-| 8010 | API (FastAPI) | same |
-| 80, 443 | Caddy (HTTPS proxy, optional `proxy` profile) | public |
-
-Postgres and Redis have no host ports. Container, volume and network names all start with `sfmail`, so nothing
-collides with BillionMail's containers.
+BillionMail already uses 25, 465, 587, 143, 993, 8080 and 41443. This stack only adds 3010 and 8010, bound to
+127.0.0.1. Postgres and Redis have no host ports. Container, volume and network names all start with `sfmail`.
+The nginx site is a separate file, so other sites on the host nginx are not touched.
 
 ## One-time setup (run on the server, one step at a time)
 
-1. **Check Git and Docker Compose are installed.**
-   ```bash
-   git --version && docker compose version
-   ```
-   If `git` is missing: `apt-get update && apt-get install -y git`.
-
-2. **Check 80/443 and 3010/8010 are free** (should print nothing).
-   ```bash
-   ss -tlnp | grep -E ':(80|443|3010|8010)\s'
-   ```
-
-3. **Clone the repo.** Public repo:
+1. **Clone the repo.** Public repo:
    ```bash
    git clone https://github.com/aryan-sigmaflux/mailsending.git /opt/sendharbor
    ```
@@ -49,56 +37,53 @@ collides with BillionMail's containers.
    git clone git@github.com:aryan-sigmaflux/mailsending.git /opt/sendharbor
    ```
 
-4. **Create the env file from the template.**
+2. **Create the env file from the template.**
    ```bash
    cd /opt/sendharbor && cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
    ```
 
-5. **Generate secrets** and paste each into `deploy/.env` (`nano deploy/.env`):
+3. **Generate secrets** and paste each into `deploy/.env` (`nano deploy/.env`), along with `SUPERADMIN_EMAIL`:
    ```bash
    echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
    echo "JWT_SECRET=$(openssl rand -hex 48)"
    echo "ENCRYPTION_KEY=$(openssl rand -base64 32 | tr '+/' '-_')"
    echo "SUPERADMIN_PASSWORD=$(openssl rand -base64 18)"
    ```
-   Also set `SUPERADMIN_EMAIL`, and replace `YOUR_SERVER_IP` with `185.193.19.137` for now.
    Back up `ENCRYPTION_KEY` somewhere safe: losing it makes stored mailbox passwords and tokens unreadable.
 
-6. **First start.**
+4. **Start the app.**
    ```bash
    docker compose -p sfmail -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
    ```
-   The app is then on `http://185.193.19.137:3010` (API docs on `:8010/docs`).
+   Check: `curl -s http://127.0.0.1:8010/health`
 
-From here on, pushes to `main` deploy automatically.
-
-## Turning on HTTPS (sendharbor.sigmaflux.in)
-
-Everything runs on one host: Caddy sends `/api/*` (API, tracking, unsubscribe, OAuth callbacks) and `/health` to the
-API, and everything else to the web app. Only one DNS record is needed.
-
-1. At the DNS provider for `sigmaflux.in`, add an **A record**: name `sendharbor`, value `185.193.19.137`
-   (no proxying/CDN, so Let's Encrypt can reach port 80). Check with `dig +short sendharbor.sigmaflux.in`.
-2. In `deploy/.env`, set:
+5. **Add the nginx site.**
+   ```bash
+   cp /opt/sendharbor/deploy/nginx/sendharbor.conf /etc/nginx/sites-available/sendharbor.conf
+   ln -s /etc/nginx/sites-available/sendharbor.conf /etc/nginx/sites-enabled/sendharbor.conf
+   nginx -t && systemctl reload nginx
    ```
-   COMPOSE_PROFILES=proxy
-   APP_DOMAIN=sendharbor.sigmaflux.in
-   ACME_EMAIL=<an email for certificate notices>
-   BIND_ADDR=127.0.0.1
-   PUBLIC_API_URL=https://sendharbor.sigmaflux.in
-   WEB_URL=https://sendharbor.sigmaflux.in
-   CORS_ORIGINS=https://sendharbor.sigmaflux.in
+   If `/etc/nginx/sites-available` doesn't exist, copy the file to `/etc/nginx/conf.d/sendharbor.conf` instead.
+
+6. **Get the HTTPS certificate** (DNS A record `sendharbor.sigmaflux.in → 185.193.19.137` must already resolve).
+   ```bash
+   apt-get update && apt-get install -y certbot python3-certbot-nginx
+   certbot --nginx -d sendharbor.sigmaflux.in --redirect
    ```
-3. Re-run the start command from step 6. Caddy fetches the certificate on its own. The web image is rebuilt,
-   since the API URL is baked into it at build time.
-4. Open https://sendharbor.sigmaflux.in. API docs stay reachable only on the server (`127.0.0.1:8010/docs`).
-5. If you use Google/Microsoft OAuth, register the redirect URIs
-   `https://sendharbor.sigmaflux.in/api/v1/mailboxes/oauth/google/callback` and `…/microsoft/callback`.
+   Certbot adds the 443 block to the site file and sets up automatic renewal.
+
+7. Open https://sendharbor.sigmaflux.in and log in with the super admin from `deploy/.env`.
+
+From here on, pushes to `main` deploy automatically. The nginx file is not redeployed; if it ever changes in the repo,
+copy it again (step 5) and re-run certbot (step 6).
+
+If you use Google/Microsoft OAuth, register the redirect URIs
+`https://sendharbor.sigmaflux.in/api/v1/mailboxes/oauth/google/callback` and `…/microsoft/callback`.
 
 ## Useful commands
 
 ```bash
 cd /opt/sendharbor
 docker compose -p sfmail -f deploy/docker-compose.prod.yml --env-file deploy/.env ps
-docker logs -f sfmail-api        # or sfmail-worker, sfmail-web, sfmail-caddy
+docker logs -f sfmail-api        # or sfmail-worker, sfmail-web
 ```
