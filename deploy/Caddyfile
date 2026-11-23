@@ -1,15 +1,20 @@
-# Reverse proxy + automatic HTTPS (Let's Encrypt). Domains come from deploy/.env.
+# Reverse proxy + automatic HTTPS (Let's Encrypt) on one host.
+# /api/* (incl. tracking, unsubscribe, OAuth callbacks) goes to the API; everything else to the web app.
 # Only runs when COMPOSE_PROFILES=proxy is set in deploy/.env.
 {
 	email {$ACME_EMAIL}
 }
 
-{$WEB_DOMAIN} {
+{$APP_DOMAIN} {
 	encode gzip
-	reverse_proxy web:3010
-}
 
-{$API_DOMAIN} {
-	encode gzip
-	reverse_proxy api:8000
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /health {
+		reverse_proxy api:8000
+	}
+	handle {
+		reverse_proxy web:3010
+	}
 }

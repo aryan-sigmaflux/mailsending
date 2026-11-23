@@ -82,8 +82,7 @@ services:
     restart: unless-stopped
     profiles: [proxy]
     environment:
-      WEB_DOMAIN: ${WEB_DOMAIN:-}
-      API_DOMAIN: ${API_DOMAIN:-}
+      APP_DOMAIN: ${APP_DOMAIN:-}
       ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro

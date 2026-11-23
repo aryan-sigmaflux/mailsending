@@ -41,7 +41,7 @@ jobs:
 
             # Smoke check: API answers from inside its container.
             for i in $(seq 1 30); do
-              if docker exec sfmail-api python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs', timeout=3)" >/dev/null 2>&1; then
+              if docker exec sfmail-api python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)" >/dev/null 2>&1; then
                 echo "Deployed $SHA"; docker compose -p sfmail -f deploy/docker-compose.prod.yml --env-file deploy/.env ps; exit 0
               fi
               sleep 5

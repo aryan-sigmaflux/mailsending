@@ -72,19 +72,28 @@ collides with BillionMail's containers.
 
 From here on, pushes to `main` deploy automatically.
 
-## Turning on HTTPS (once the domain is chosen)
+## Turning on HTTPS (sendharbor.sigmaflux.in)
 
-1. Add DNS A records for `app.YOUR_DOMAIN` and `api.YOUR_DOMAIN` pointing at `185.193.19.137`.
-2. In `deploy/.env`, uncomment and fill `COMPOSE_PROFILES=proxy`, `WEB_DOMAIN`, `API_DOMAIN`, `ACME_EMAIL`, and set:
+Everything runs on one host: Caddy sends `/api/*` (API, tracking, unsubscribe, OAuth callbacks) and `/health` to the
+API, and everything else to the web app. Only one DNS record is needed.
+
+1. At the DNS provider for `sigmaflux.in`, add an **A record**: name `sendharbor`, value `185.193.19.137`
+   (no proxying/CDN, so Let's Encrypt can reach port 80). Check with `dig +short sendharbor.sigmaflux.in`.
+2. In `deploy/.env`, set:
    ```
+   COMPOSE_PROFILES=proxy
+   APP_DOMAIN=sendharbor.sigmaflux.in
+   ACME_EMAIL=<an email for certificate notices>
    BIND_ADDR=127.0.0.1
-   PUBLIC_API_URL=https://api.YOUR_DOMAIN
-   WEB_URL=https://app.YOUR_DOMAIN
-   CORS_ORIGINS=https://app.YOUR_DOMAIN
+   PUBLIC_API_URL=https://sendharbor.sigmaflux.in
+   WEB_URL=https://sendharbor.sigmaflux.in
+   CORS_ORIGINS=https://sendharbor.sigmaflux.in
    ```
-3. Re-run the start command from step 6. Caddy fetches the certificates on its own. The web image is rebuilt,
+3. Re-run the start command from step 6. Caddy fetches the certificate on its own. The web image is rebuilt,
    since the API URL is baked into it at build time.
-4. If you use Google/Microsoft OAuth, update the redirect URIs to `https://api.YOUR_DOMAIN/api/v1/mailboxes/oauth/...`.
+4. Open https://sendharbor.sigmaflux.in. API docs stay reachable only on the server (`127.0.0.1:8010/docs`).
+5. If you use Google/Microsoft OAuth, register the redirect URIs
+   `https://sendharbor.sigmaflux.in/api/v1/mailboxes/oauth/google/callback` and `…/microsoft/callback`.
 
 ## Useful commands
 
