@@ -29,7 +29,13 @@ def window(schedule: dict) -> tuple[ZoneInfo, list[int], time, time]:
     )
 
 
+def is_instant(schedule: dict) -> bool:
+    return (schedule or {}).get("mode") == "instant"
+
+
 def in_window(schedule: dict, now: datetime | None = None) -> bool:
+    if is_instant(schedule):
+        return True
     zone, days, start, end = window(schedule)
     local = (now or datetime.now(timezone.utc)).astimezone(zone)
     return local.weekday() in days and start <= local.time() < end
@@ -37,6 +43,8 @@ def in_window(schedule: dict, now: datetime | None = None) -> bool:
 
 def next_window_start(schedule: dict, now: datetime | None = None) -> datetime:
     """Next moment (UTC) that falls inside the sending window."""
+    if is_instant(schedule):
+        return now or datetime.now(timezone.utc)
     zone, days, start, end = window(schedule)
     local = (now or datetime.now(timezone.utc)).astimezone(zone)
     if local.weekday() in days and start <= local.time() < end:

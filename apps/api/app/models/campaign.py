@@ -9,6 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base, IdMixin, TimestampMixin
 
+# mode: "instant" sends any day/time until done; "window" only sends inside days + start–end (from start_at).
+# Campaigns saved before `mode` existed have no key and are treated as "window".
 DEFAULT_SCHEDULE = {"timezone": "UTC", "days": [0, 1, 2, 3, 4], "start": "09:00", "end": "17:00", "start_at": None}
 DEFAULT_SETTINGS = {"daily_cap": 200, "stop_on_reply": True}
 

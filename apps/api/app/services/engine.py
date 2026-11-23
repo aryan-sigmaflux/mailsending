@@ -25,7 +25,7 @@ from app.models import Campaign, CampaignContact, Contact, Mailbox, Message, Sup
 from app.models.campaign import LIVE_STATES
 from app.services import graph as g
 from app.services import limits, renderer, transport
-from app.services.schedule import add_wait, in_window, next_window_start
+from app.services.schedule import add_wait, in_window, is_instant, next_window_start
 
 log = logging.getLogger("engine")
 
@@ -70,7 +70,7 @@ async def process_campaign(cid: uuid.UUID) -> None:
         if not camp or camp.status != "running" or not camp.graph_snapshot:
             return
         start_at = (camp.schedule or {}).get("start_at")
-        if start_at and datetime.fromisoformat(start_at) > utcnow():
+        if start_at and not is_instant(camp.schedule) and datetime.fromisoformat(start_at) > utcnow():
             return
         user = await db.get(User, camp.user_id)
         if not user or user.status != "active":

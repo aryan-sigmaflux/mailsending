@@ -188,7 +188,8 @@ export interface Campaign {
   template_ids: string[];
   list_ids: string[];
   mailbox_ids: string[];
-  schedule: { timezone: string; days: number[]; start: string; end: string; start_at: string | null };
+  /** mode "instant" sends any day/time until done; "window" (also when missing, for older campaigns) uses days + start–end. */
+  schedule: { mode?: "instant" | "window"; timezone: string; days: number[]; start: string; end: string; start_at: string | null };
   settings: { daily_cap: number; stop_on_reply: boolean };
   started_at: string | null;
   completed_at: string | null;

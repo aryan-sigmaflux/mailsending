@@ -114,6 +114,8 @@ async def create_campaign(body: CampaignIn, user: CurrentUser, db: DB):
     await _check_refs(db, user, body)
     c = Campaign(user_id=user.id)
     _apply(c, body)
+    if c.schedule.get("mode") not in ("instant", "window"):
+        c.schedule = {**c.schedule, "mode": "instant"}  # new campaigns send right away unless scheduled
     db.add(c)
     await db.commit()
     await db.refresh(c)

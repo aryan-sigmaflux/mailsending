@@ -67,6 +67,7 @@ function Setup({ c }: { c: Campaign }) {
   useEffect(() => { preflight.mutate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const pf = preflight.data;
   const sch = f.schedule;
+  const instant = sch.mode === "instant";
 
   return (
     <>
@@ -124,19 +125,30 @@ function Setup({ c }: { c: Campaign }) {
 
           <article className="card">
             <h3>4 · When</h3>
-            <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
-              <Field label="Time zone"><select className="select" value={sch.timezone} onChange={(e) => set({ schedule: { ...sch, timezone: e.target.value } })}>{TIMEZONES.map((z) => <option key={z}>{z}</option>)}</select></Field>
-              <Field label="From"><input className="input" type="time" value={sch.start} onChange={(e) => set({ schedule: { ...sch, start: e.target.value } })} /></Field>
-              <Field label="To"><input className="input" type="time" value={sch.end} onChange={(e) => set({ schedule: { ...sch, end: e.target.value } })} /></Field>
-              <Field label="Start date (optional)"><input className="input" type="datetime-local" value={sch.start_at?.slice(0, 16) ?? ""} onChange={(e) => set({ schedule: { ...sch, start_at: e.target.value ? new Date(e.target.value).toISOString() : null } })} /></Field>
-            </div>
-            <div className="field mt-4"><span>Working days <small>— also used by “working days only” Wait nodes</small></span>
+            <div className="mt-4"><Seg value={instant ? "instant" : "window"} onChange={(m) => set({ schedule: { ...sch, mode: m, ...(m === "instant" ? { start_at: null } : {}) } })}
+              options={[{ value: "instant", label: "Instantly" }, { value: "window", label: "Custom schedule" }]} /></div>
+            {instant ? (
+              <>
+                <p className="text-[12.5px] text-txt-2 mt-3">Starts the moment you launch and keeps sending — any day, any time — until every lead is done. Mailbox daily limits, sending delays and the daily cap below still apply.</p>
+                <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
+                  <Field label="Time zone" hint="Used for analytics and “working days only” Wait nodes"><select className="select" value={sch.timezone} onChange={(e) => set({ schedule: { ...sch, timezone: e.target.value } })}>{TIMEZONES.map((z) => <option key={z}>{z}</option>)}</select></Field>
+                </div>
+              </>
+            ) : (
+              <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
+                <Field label="Time zone"><select className="select" value={sch.timezone} onChange={(e) => set({ schedule: { ...sch, timezone: e.target.value } })}>{TIMEZONES.map((z) => <option key={z}>{z}</option>)}</select></Field>
+                <Field label="From"><input className="input" type="time" value={sch.start} onChange={(e) => set({ schedule: { ...sch, start: e.target.value } })} /></Field>
+                <Field label="To"><input className="input" type="time" value={sch.end} onChange={(e) => set({ schedule: { ...sch, end: e.target.value } })} /></Field>
+                <Field label="Start date (optional)"><input className="input" type="datetime-local" value={sch.start_at?.slice(0, 16) ?? ""} onChange={(e) => set({ schedule: { ...sch, start_at: e.target.value ? new Date(e.target.value).toISOString() : null } })} /></Field>
+              </div>
+            )}
+            {(!instant || f.kind === "sequence") && <div className="field mt-4"><span>Working days <small>— {instant ? "only used by “working days only” Wait nodes" : "also used by “working days only” Wait nodes"}</small></span>
               <div className="flex gap-1.5 flex-wrap">
                 {DAYS.map((d, i) => (
                   <button key={d} type="button" className={`chip ${sch.days.includes(i) ? "on" : ""}`} onClick={() => set({ schedule: { ...sch, days: sch.days.includes(i) ? sch.days.filter((x) => x !== i) : [...sch.days, i].sort() } })}><span>{d}</span></button>
                 ))}
               </div>
-            </div>
+            </div>}
             <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "1fr 1fr" }}>
               <Field label="Max emails per day (this campaign)"><input className="input" type="number" min={1} value={f.settings.daily_cap} onChange={(e) => set({ settings: { ...f.settings, daily_cap: +e.target.value } })} /></Field>
               <label className="flex items-center gap-3 text-[13.5px] mt-6"><Toggle on={f.settings.stop_on_reply} onChange={(v) => set({ settings: { ...f.settings, stop_on_reply: v } })} label="Stop on reply" /> Stop sequence when a lead replies</label>
@@ -206,7 +218,7 @@ function Live({ c }: { c: Campaign }) {
           <Link href="/campaigns" className="btn btn-icon btn-dark" aria-label="Back"><ArrowLeft /></Link>
           <div className="min-w-0">
             <h1 className="truncate-1">{c.name}</h1>
-            <p>{c.kind === "sequence" ? "Sequence" : "Single template"} · started {ago(c.started_at)} · {c.schedule.timezone} {c.schedule.start}–{c.schedule.end}</p>
+            <p>{c.kind === "sequence" ? "Sequence" : "Single template"} · started {ago(c.started_at)} · {c.schedule.mode === "instant" ? "sending anytime until done" : `${c.schedule.timezone} ${c.schedule.start}–${c.schedule.end}`}</p>
           </div>
           <StatusBadge status={c.status} />
         </div>
