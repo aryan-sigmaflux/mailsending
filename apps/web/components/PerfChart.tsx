@@ -4,7 +4,8 @@ import { TrendingDown, TrendingUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { longDate, monthShort, num } from "@/lib/format";
 
-export interface Point { t: string; sent: number; opened: number; replied: number }
+export interface Point { t: string; sent: number; opened: number; replied: number; clicked?: number }
+export type Metric = "sent" | "opened" | "clicked" | "replied";
 
 /** Monotone cubic interpolation (no overshoot) — same curve as the design mockup. */
 function monotone(p: [number, number][]) {
@@ -27,7 +28,7 @@ function niceMax(v: number) {
 
 const short = (v: number) => (v >= 1000 ? `${+(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : String(Math.round(v)));
 
-export function PerfChart({ points, range, metric = "sent", height = 250 }: { points: Point[]; range: string; metric?: "sent" | "opened" | "replied"; height?: number }) {
+export function PerfChart({ points, range, metric = "sent", height = 250 }: { points: Point[]; range: string; metric?: Metric; height?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(0);
   const [hover, setHover] = useState<number | null>(null);
@@ -41,7 +42,7 @@ export function PerfChart({ points, range, metric = "sent", height = 250 }: { po
   }, []);
 
 
-  const vals = points.map((p) => p[metric]);
+  const vals = points.map((p) => p[metric] ?? 0);
   const max = niceMax(Math.max(0, ...vals));
   const L = 46, R = 8, T = 14, B = 34, H = height;
   const n = Math.max(points.length, 2);

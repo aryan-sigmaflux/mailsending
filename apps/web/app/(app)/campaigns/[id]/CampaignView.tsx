@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CircleCheck, CircleExclamationPoint, Pause, Play, Rocket, Save } from "lucide-react";
+import { ArrowLeft, ChartColumn, CircleCheck, CircleExclamationPoint, Eye, MousePointerClick, Pause, Play, Reply, Rocket, Save } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -12,7 +12,22 @@ import { DAYS, TIMEZONES, ago, num, pct, until } from "@/lib/format";
 import type { Campaign, ContactList, Mailbox, Paged, Sequence, Template } from "@/lib/types";
 
 interface Preflight { errors: string[]; audience: number; variables: string[]; missing: { variable: string; leads: number }[]; leads_missing: number; capacity_today: number; mailbox_capacity_per_day: number }
-interface CC { id: string; email: string; first_name: string; company: string; state: string; current_node: string | null; next_run_at: string | null; steps_sent: number; last_sent_at: string | null; error: string | null }
+interface CC { id: string; email: string; first_name: string; company: string; state: string; current_node: string | null; next_run_at: string | null; steps_sent: number; last_sent_at: string | null; error: string | null; opened_at: string | null; clicked_at: string | null; replied_at: string | null; opens: number; clicks: number }
+
+const when = (iso: string) => new Date(iso).toLocaleString();
+
+/** Opened / Clicked / Replied tags for one lead (only human engagement is counted by the API). */
+function Engagement({ x }: { x: CC }) {
+  if (!x.steps_sent && !x.last_sent_at) return <span className="text-muted text-[12px]">—</span>;
+  if (!x.opened_at && !x.clicked_at && !x.replied_at) return <span className="badge b-gray">Not opened</span>;
+  return (
+    <div className="flex gap-1 flex-wrap">
+      {x.opened_at && <span className="badge b-pink" title={`First opened ${when(x.opened_at)}${x.opens > 1 ? ` · ${x.opens} opens` : ""}`}><Eye /> Opened{x.opens > 1 ? ` ×${x.opens}` : ""}</span>}
+      {x.clicked_at && <span className="badge b-blue" title={`First clicked ${when(x.clicked_at)}`}><MousePointerClick /> Clicked{x.clicks > 1 ? ` ×${x.clicks}` : ""}</span>}
+      {x.replied_at && <span className="badge b-green" title={`Replied ${when(x.replied_at)}`}><Reply /> Replied</span>}
+    </div>
+  );
+}
 interface Step { node_id: string; template: string | null; sent: number; opened: number; clicked: number; replied: number }
 
 function Picker<T extends { id: string }>({ items, value, onChange, render, empty }: { items: T[]; value: string[]; onChange: (v: string[]) => void; render: (t: T) => React.ReactNode; empty: React.ReactNode }) {
@@ -173,7 +188,8 @@ function Setup({ c }: { c: Campaign }) {
 function Live({ c }: { c: Campaign }) {
   const qc = useQueryClient();
   const [state, setState] = useState("");
-  const ccs = useQuery({ queryKey: ["cc", c.id, state], queryFn: () => get<Paged<CC>>(`/campaigns/${c.id}/contacts?size=100${state ? `&state=${state}` : ""}`), refetchInterval: 15_000 });
+  const [eng, setEng] = useState("");
+  const ccs = useQuery({ queryKey: ["cc", c.id, state, eng], queryFn: () => get<Paged<CC>>(`/campaigns/${c.id}/contacts?size=100${state ? `&state=${state}` : ""}${eng ? `&engagement=${eng}` : ""}`), refetchInterval: 15_000 });
   const steps = useQuery({ queryKey: ["steps", c.id], queryFn: () => get<Step[]>(`/campaigns/${c.id}/steps`), refetchInterval: 30_000 });
   const act = useMutation({
     mutationFn: (a: "pause" | "launch") => post<Campaign>(`/campaigns/${c.id}/${a}`, a === "launch" ? { missing_policy: "fallback" } : undefined),
@@ -195,6 +211,7 @@ function Live({ c }: { c: Campaign }) {
           <StatusBadge status={c.status} />
         </div>
         <div className="flex gap-2">
+          <Link href={`/campaigns/${c.id}/analytics`} className="btn btn-dark"><ChartColumn /> Analytics</Link>
           {c.status === "running" && <button className="btn btn-dark" onClick={() => act.mutate("pause")}><Pause /> Pause</button>}
           {c.status === "paused" && <button className="btn btn-primary" onClick={() => act.mutate("launch")}><Play /> Resume</button>}
         </div>
@@ -227,18 +244,22 @@ function Live({ c }: { c: Campaign }) {
 
       <article className="card in">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h3>Leads</h3>
-          <Seg value={state} onChange={setState} options={[{ value: "", label: "All" }, { value: "active", label: "Active" }, { value: "waiting", label: "Waiting" }, { value: "replied", label: "Replied" }, { value: "done", label: "Done" }, { value: "bounced", label: "Bounced" }]} />
+          <h3>Leads{ccs.data ? <small className="text-muted text-[12px] ml-2">{num(ccs.data.total)}</small> : null}</h3>
+          <div className="flex gap-2 flex-wrap">
+            <Seg value={eng} onChange={setEng} options={[{ value: "", label: "Any" }, { value: "opened", label: "Opened" }, { value: "unopened", label: "Not opened" }, { value: "clicked", label: "Clicked" }]} />
+            <Seg value={state} onChange={setState} options={[{ value: "", label: "All" }, { value: "active", label: "Active" }, { value: "waiting", label: "Waiting" }, { value: "replied", label: "Replied" }, { value: "done", label: "Done" }, { value: "bounced", label: "Bounced" }]} />
+          </div>
         </div>
         {!ccs.data?.items.length ? <Empty title="No leads in this state" /> : (
           <div className="overflow-x-auto mt-3">
             <table className="table">
-              <thead><tr><th>Lead</th><th>State</th><th>Step</th><th>Emails sent</th><th>Next action</th></tr></thead>
+              <thead><tr><th>Lead</th><th>State</th><th>Engagement</th><th>Step</th><th>Emails sent</th><th>Next action</th></tr></thead>
               <tbody>
                 {ccs.data.items.map((x) => (
                   <tr key={x.id}>
                     <td><div>{x.email}</div><div className="text-[11.5px] text-muted">{[x.first_name, x.company].filter(Boolean).join(" · ")}</div></td>
                     <td><StatusBadge status={x.state} />{x.error && <div className="text-[11px] text-red mt-1 max-w-[220px] truncate-1" title={x.error}>{x.error}</div>}</td>
+                    <td><Engagement x={x} /></td>
                     <td className="text-txt-2 text-[12.5px]">{x.current_node ?? "—"}</td>
                     <td>{x.steps_sent}</td>
                     <td className="text-txt-2 text-[12.5px]">{x.next_run_at && ["active", "waiting", "pending"].includes(x.state) ? (new Date(x.next_run_at) > new Date() ? `in ${until(x.next_run_at)}` : "now") : "—"}</td>

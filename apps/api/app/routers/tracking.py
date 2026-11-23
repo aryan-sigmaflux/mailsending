@@ -12,18 +12,24 @@ from app.core.deps import DB
 from app.core.tokens import verify_message
 from app.models import CampaignContact, Contact, Event, Message, Suppression
 from app.models.campaign import LIVE_STATES
+from app.services.engagement import machine_reason
 
 router = APIRouter(prefix="/t", tags=["tracking"])
 
 PIXEL = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
 NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"}
 
-# Mail-security scanners prefetch links/pixels; don't count those as human engagement.
-BOT_HINTS = ("googleimageproxy", "barracuda", "proofpoint", "mimecast", "symantec", "bot", "crawler", "preview")
-
-
 def _meta(req: Request) -> dict:
     return {"ip": req.client.host if req.client else None, "ua": (req.headers.get("user-agent") or "")[:300]}
+
+
+def _classify(msg: Message, req: Request, now: datetime) -> dict:
+    """Request metadata plus ``machine`` (reason) when the hit is automated rather than a person."""
+    meta = _meta(req)
+    reason = machine_reason(ua=meta["ua"], sent_at=msg.sent_at, at=now, referer=req.headers.get("referer"))
+    if reason:
+        meta["machine"] = reason
+    return meta
 
 
 @router.get("/o/{token}.gif")
@@ -32,12 +38,12 @@ async def open_pixel(token: str, request: Request, db: DB):
     msg = await db.get(Message, mid) if mid else None
     if msg:
         now = datetime.now(timezone.utc)
-        msg.open_count += 1
-        # Ignore opens in the first few seconds after sending — almost always scanners.
-        if not msg.opened_at and (now - msg.sent_at).total_seconds() > 5:
-            msg.opened_at = now
+        meta = _classify(msg, request, now)
+        if "machine" not in meta:  # only people count as opens
+            msg.open_count += 1
+            msg.opened_at = msg.opened_at or now
         db.add(Event(user_id=msg.user_id, message_id=msg.id, campaign_id=msg.campaign_id, contact_id=msg.contact_id,
-                     kind="open", meta=_meta(request)))
+                     kind="open", meta=meta))
         await db.commit()
     return Response(content=PIXEL, media_type="image/gif", headers=NO_CACHE)
 
@@ -50,13 +56,14 @@ async def click(token: str, u: str, request: Request, db: DB):
         return HTMLResponse("<h3>Invalid link</h3>", status_code=400)
     msg = await db.get(Message, mid)
     if msg:
-        ua = (request.headers.get("user-agent") or "").lower()
-        msg.click_count += 1
-        if not any(b in ua for b in BOT_HINTS):
-            msg.clicked_at = msg.clicked_at or datetime.now(timezone.utc)
-            msg.opened_at = msg.opened_at or msg.clicked_at  # a click implies an open
+        now = datetime.now(timezone.utc)
+        meta = _classify(msg, request, now)
+        if "machine" not in meta:  # link scanners click everything on delivery
+            msg.click_count += 1
+            msg.clicked_at = msg.clicked_at or now
+            msg.opened_at = msg.opened_at or now  # a click implies an open (works even when images are blocked)
         db.add(Event(user_id=msg.user_id, message_id=msg.id, campaign_id=msg.campaign_id, contact_id=msg.contact_id,
-                     kind="click", url=url, meta=_meta(request)))
+                     kind="click", url=url, meta=meta))
         await db.commit()
     return RedirectResponse(url, status_code=302)
 

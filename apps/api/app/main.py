@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import (
-    admin, auth, campaigns, contacts, dashboard, domains, integrations, mailboxes, sequences, templates, tracking, verifier,
+    admin, auth, campaigns, contacts, dashboard, domains, integrations, mailboxes, messages, sequences, templates, tracking,
+    verifier,
 )
 
 app = FastAPI(title=settings.APP_NAME, version="0.1.0", docs_url="/docs", openapi_url="/openapi.json")
@@ -16,7 +17,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth, admin, dashboard, domains, mailboxes, contacts, templates, sequences, campaigns, verifier, integrations, tracking):
+for r in (auth, admin, dashboard, domains, mailboxes, contacts, templates, sequences, campaigns, messages, verifier, integrations,
+          tracking):
     app.include_router(r.router, prefix=settings.API_PREFIX)
 
 

@@ -51,6 +51,7 @@
   --color-green: var(--green);
   --color-amber: var(--amber);
   --color-red: var(--red);
+  --color-blue: var(--blue);
   --color-card: var(--card);
   --color-card-2: var(--card-2);
 }

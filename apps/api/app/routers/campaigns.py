@@ -1,13 +1,15 @@
+import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, literal_column, select, true
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.deps import DB, CurrentUser, get_owned
-from app.models import Campaign, CampaignContact, Contact, ContactList, Mailbox, Message, Sequence, Suppression, Template, list_contacts
+from app.models import Campaign, CampaignContact, Contact, ContactList, Event, Mailbox, Message, Sequence, Suppression, Template, list_contacts
 from app.models.campaign import DEFAULT_SCHEDULE, DEFAULT_SETTINGS, LIVE_STATES
 from app.schemas import ORM
 from app.services import graph as g
@@ -268,19 +270,41 @@ async def delete_campaign(campaign_id: uuid.UUID, user: CurrentUser, db: DB):
 
 
 @router.get("/{campaign_id}/contacts")
-async def campaign_contacts(campaign_id: uuid.UUID, user: CurrentUser, db: DB,
-                            state: str = "", page: int = Query(1, ge=1), size: int = Query(50, le=200)):
+async def campaign_contacts(campaign_id: uuid.UUID, user: CurrentUser, db: DB, state: str = "",
+                            engagement: str = Query("", pattern="^(|opened|unopened|clicked|replied)$"),
+                            page: int = Query(1, ge=1), size: int = Query(50, le=200)):
     await get_owned(db, Campaign, campaign_id, user)
-    stmt = (select(CampaignContact, Contact.email, Contact.first_name, Contact.company)
-            .join(Contact, Contact.id == CampaignContact.contact_id).where(CampaignContact.campaign_id == campaign_id))
+    eng = (
+        select(Message.campaign_contact_id.label("ccid"),
+               func.min(Message.opened_at).label("opened_at"), func.min(Message.clicked_at).label("clicked_at"),
+               func.min(Message.replied_at).label("replied_at"),
+               func.coalesce(func.sum(Message.open_count), 0).label("opens"),
+               func.coalesce(func.sum(Message.click_count), 0).label("clicks"))
+        .where(Message.campaign_id == campaign_id, Message.status != "failed").group_by(Message.campaign_contact_id)
+        .subquery()
+    )
+    stmt = (select(CampaignContact, Contact.email, Contact.first_name, Contact.company,
+                   eng.c.opened_at, eng.c.clicked_at, eng.c.replied_at, eng.c.opens, eng.c.clicks)
+            .join(Contact, Contact.id == CampaignContact.contact_id)
+            .outerjoin(eng, eng.c.ccid == CampaignContact.id)
+            .where(CampaignContact.campaign_id == campaign_id))
     if state:
         stmt = stmt.where(CampaignContact.state == state)
+    if engagement == "opened":
+        stmt = stmt.where(eng.c.opened_at.is_not(None))
+    elif engagement == "unopened":
+        stmt = stmt.where(eng.c.ccid.is_not(None), eng.c.opened_at.is_(None))
+    elif engagement == "clicked":
+        stmt = stmt.where(eng.c.clicked_at.is_not(None))
+    elif engagement == "replied":
+        stmt = stmt.where(eng.c.replied_at.is_not(None))
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (await db.execute(stmt.order_by(CampaignContact.updated_at.desc()).offset((page - 1) * size).limit(size))).all()
     return {"total": total, "items": [
         {"id": cc.id, "email": email, "first_name": fn, "company": co, "state": cc.state, "current_node": cc.current_node,
-         "next_run_at": cc.next_run_at, "steps_sent": cc.steps_sent, "last_sent_at": cc.last_sent_at, "error": cc.error}
-        for cc, email, fn, co in rows
+         "next_run_at": cc.next_run_at, "steps_sent": cc.steps_sent, "last_sent_at": cc.last_sent_at, "error": cc.error,
+         "opened_at": oa, "clicked_at": ca, "replied_at": ra, "opens": int(opens or 0), "clicks": int(clicks or 0)}
+        for cc, email, fn, co, oa, ca, ra, opens, clicks in rows
     ]}
 
 
@@ -310,3 +334,125 @@ async def step_stats(campaign_id: uuid.UUID, user: CurrentUser, db: DB):
     )).all()
     return [{"node_id": n, "template_id": t, "template": name, "sent": s, "opened": o, "clicked": c, "replied": r}
             for n, t, name, s, o, c, r in rows]
+
+
+@router.get("/{campaign_id}/analytics")
+async def analytics(campaign_id: uuid.UUID, user: CurrentUser, db: DB):
+    """Everything the campaign analytics page shows, in one round trip."""
+    c = await get_owned(db, Campaign, campaign_id, user)
+    tz = (c.schedule or {}).get("timezone") or "UTC"
+    try:
+        zone = ZoneInfo(tz)
+    except Exception:  # noqa: BLE001 — bad tz string stored on the campaign
+        tz, zone = "UTC", timezone.utc
+    # Inlined (not a bind param) so the SELECT and GROUP BY expressions are identical to Postgres.
+    tzl = literal_column("'" + re.sub(r"[^A-Za-z0-9_/+\-]", "", tz) + "'")
+    mine = Message.campaign_id == campaign_id
+    delivered = Message.status != "failed"
+    human = ~Event.meta.has_key("machine")  # noqa: W601 — JSONB ? operator
+
+    # ── Headline numbers ──
+    s = (await db.execute(select(
+        func.count().filter(delivered), func.count().filter(Message.status == "bounced"),
+        func.count().filter(Message.status == "failed"),
+        func.count(Message.opened_at).filter(delivered), func.coalesce(func.sum(Message.open_count), 0),
+        func.count(Message.clicked_at).filter(delivered), func.coalesce(func.sum(Message.click_count), 0),
+        func.count(Message.replied_at), func.count(func.distinct(Message.campaign_contact_id)),
+        func.percentile_cont(0.5).within_group(func.extract("epoch", Message.opened_at - Message.sent_at)),
+        func.percentile_cont(0.5).within_group(func.extract("epoch", Message.replied_at - Message.sent_at)),
+    ).where(mine))).one()
+    sent, bounced, failed, opened, opens, clicked, clicks, replied, contacted, t_open, t_reply = s
+    ev = dict((await db.execute(
+        select(Event.kind, func.count(func.distinct(Event.message_id))).where(Event.campaign_id == campaign_id)
+        .group_by(Event.kind)
+    )).all())
+    reason = Event.meta["machine"].astext  # one object, so SELECT and GROUP BY share the bind param
+    machine = (await db.execute(
+        select(Event.kind, reason, func.count())
+        .where(Event.campaign_id == campaign_id, Event.kind.in_(("open", "click")), Event.meta.has_key("machine"))
+        .group_by(Event.kind, reason)
+    )).all()
+    states = dict((await db.execute(
+        select(CampaignContact.state, func.count()).where(CampaignContact.campaign_id == campaign_id)
+        .group_by(CampaignContact.state)
+    )).all())
+
+    # ── Daily timeline (campaign time zone): each metric bucketed by when it happened ──
+    def day(col):
+        return func.date_trunc("day", func.timezone(tzl, col))
+
+    series: dict[str, dict] = {}
+    for key, col, extra in (("sent", Message.sent_at, delivered), ("opened", Message.opened_at, delivered),
+                            ("clicked", Message.clicked_at, delivered), ("replied", Message.replied_at, true())):
+        bucket = day(col)
+        rows = (await db.execute(
+            select(bucket, func.count()).where(mine, col.is_not(None), extra).group_by(bucket)
+        )).all()
+        series[key] = {d.date(): n for d, n in rows}
+    all_days = [d for m in series.values() for d in m]
+    timeline = []
+    if all_days:
+        first = min(all_days)
+        last = max(max(all_days), datetime.now(zone).date() if c.status != "completed" else max(all_days))
+        n = min((last - first).days + 1, 366)
+        for i in range(n):
+            d = first + timedelta(days=i)
+            timeline.append({"t": f"{d.isoformat()}T00:00:00", **{k: series[k].get(d, 0) for k in series}})
+
+    # ── When people open (first human open), weekday × hour in the campaign time zone ──
+    local_open = func.timezone(tzl, Message.opened_at)
+    dow, hour = func.extract("isodow", local_open), func.extract("hour", local_open)
+    heat = [{"dow": int(dw) - 1, "hour": int(h), "n": n} for dw, h, n in (await db.execute(
+        select(dow, hour, func.count()).where(mine, Message.opened_at.is_not(None)).group_by(dow, hour)
+    )).all()]
+
+    # ── Per step / template ──
+    steps = [{"node_id": nid, "template_id": tid, "template": name, "sent": s_, "opened": o, "clicked": cl, "replied": r, "bounced": b}
+             for nid, tid, name, s_, o, cl, r, b, _ in (await db.execute(
+                 select(Message.node_id, Message.template_id, Template.name, func.count().filter(delivered),
+                        func.count(Message.opened_at), func.count(Message.clicked_at), func.count(Message.replied_at),
+                        func.count().filter(Message.status == "bounced"), func.min(Message.sent_at))
+                 .outerjoin(Template, Template.id == Message.template_id).where(mine)
+                 .group_by(Message.node_id, Message.template_id, Template.name).order_by(func.min(Message.sent_at))
+             )).all()]
+
+    # ── Per mailbox ──
+    mailboxes = [{"mailbox_id": mid, "email": email or "deleted mailbox", "sent": s_, "opened": o, "replied": r, "bounced": b}
+                 for mid, email, s_, o, r, b in (await db.execute(
+                     select(Message.mailbox_id, Mailbox.email, func.count().filter(delivered), func.count(Message.opened_at),
+                            func.count(Message.replied_at), func.count().filter(Message.status == "bounced"))
+                     .outerjoin(Mailbox, Mailbox.id == Message.mailbox_id).where(mine)
+                     .group_by(Message.mailbox_id, Mailbox.email).order_by(func.count().desc())
+                 )).all()]
+
+    # ── Links ──
+    links = [{"url": u, "clicks": n, "unique": uq} for u, n, uq in (await db.execute(
+        select(Event.url, func.count(), func.count(func.distinct(Event.message_id)))
+        .where(Event.campaign_id == campaign_id, Event.kind == "click", human)
+        .group_by(Event.url).order_by(func.count().desc()).limit(20)
+    )).all()]
+
+    # ── Recent activity ──
+    activity = [{"kind": e.kind, "at": e.created_at, "email": to, "url": e.url, "machine": (e.meta or {}).get("machine")}
+                for e, to in (await db.execute(
+                    select(Event, Message.to_email).outerjoin(Message, Message.id == Event.message_id)
+                    .where(Event.campaign_id == campaign_id).order_by(Event.created_at.desc()).limit(40)
+                )).all()]
+
+    return {
+        "timezone": tz,
+        "summary": {
+            "leads": sum(states.values()), "contacted": contacted, "sent": sent, "delivered": sent - bounced,
+            "bounced": bounced, "failed": failed, "opened": opened, "opens": int(opens), "clicked": clicked,
+            "clicks": int(clicks), "replied": replied, "unsubscribed": ev.get("unsubscribe", 0),
+            "median_open_seconds": t_open, "median_reply_seconds": t_reply,
+        },
+        "filtered": [{"kind": k, "reason": r, "count": n} for k, r, n in machine],
+        "states": states,
+        "timeline": timeline,
+        "heatmap": heat,
+        "steps": steps,
+        "mailboxes": mailboxes,
+        "links": links,
+        "activity": activity,
+    }

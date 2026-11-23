@@ -382,6 +382,7 @@ async def poll_mailbox(mailbox_id: uuid.UUID) -> int:
             else:
                 if not msg.replied_at:
                     msg.replied_at = utcnow()
+                msg.opened_at = msg.opened_at or msg.replied_at  # a reply implies it was read (images may be blocked)
                 msg.reply_snippet = it["body"][:4000]
                 db.add(Event(user_id=mb.user_id, message_id=msg.id, campaign_id=msg.campaign_id,
                              contact_id=msg.contact_id, kind="reply", meta={"from": it["from"], "subject": it["subject"]}))

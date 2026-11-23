@@ -9,6 +9,7 @@ from app.core.deps import DB, CurrentUser, get_owned
 from app.models import Campaign, Contact, Domain, Event, Mailbox, Message, UsageDaily
 from app.routers.auth import build_usage
 from app.services import transport
+from app.services.renderer import strip_tracking
 
 router = APIRouter(tags=["dashboard"])
 
@@ -110,7 +111,7 @@ async def inbox(user: CurrentUser, db: DB, mailbox_id: uuid.UUID | None = None, 
     return {"total": total, "items": [
         {"id": m.id, "to": m.to_email, "name": f"{fn or ''} {ln or ''}".strip(), "company": co, "mailbox": mb,
          "campaign": cname, "subject": m.subject, "reply": m.reply_snippet, "replied_at": m.replied_at,
-         "sent_body": m.body_html, "sent_at": m.sent_at}
+         "sent_body": strip_tracking(m.body_html), "sent_at": m.sent_at}
         for m, fn, ln, co, mb, cname in rows
     ]}
 

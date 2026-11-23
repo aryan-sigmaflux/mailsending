@@ -1,20 +1,22 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, CircleExclamationPoint, Flame, Globe, Mail, Plus, Search, ShieldCheck, TriangleExclamationPoint } from "lucide-react";
+import { ArrowUpRight, CircleExclamationPoint, Eye, Flame, Globe, Mail, MousePointerClick, Plus, Reply, Search, ShieldCheck, SquarePen, TriangleExclamationPoint } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { ComposeModal } from "@/components/ComposeModal";
 import { PerfChart, type Point } from "@/components/PerfChart";
-import { Empty, ProviderBadge, Seg, Skeleton } from "@/components/ui";
+import { Empty, ProviderBadge, Seg, Skeleton, StatusBadge } from "@/components/ui";
 import { get } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { firstName, num, pct } from "@/lib/format";
+import { ago, firstName, num, pct } from "@/lib/format";
 import { useCountUp, useRotating } from "@/lib/hooks";
 import type { Usage } from "@/lib/types";
 
 interface DashMailbox { id: string; email: string; provider: string; status: string; health_score: number; warmup_enabled: boolean; warmup: { max_per_day: number }; daily_limit: number; sent_today: number; avg_last_week: number; last_error: string | null }
 interface DashDomain { id: string; name: string; health_score: number | null; verified: boolean; mailboxes: number; issues: string[] }
+interface Single { id: string; to: string; subject: string; mailbox: string | null; status: string; sent_at: string; opened_at: string | null; clicked_at: string | null; replied_at: string | null; open_count: number }
 interface Dash { usage: Usage; emails_sent_6m: number; rates_30d: { sent: number; opened: number; replied: number; bounced: number }; mailboxes: DashMailbox[]; domains: DashDomain[] }
 
 const RANGES = ["1D", "1W", "1M", "6M", "1Y"] as const;
@@ -27,10 +29,12 @@ export default function Dashboard() {
   const [metric, setMetric] = useState<"sent" | "opened" | "replied">("sent");
   const [mbTab, setMbTab] = useState<"top" | "warm" | "issues">("top");
   const [ask, setAsk] = useState("");
+  const [compose, setCompose] = useState(false);
   const placeholder = useRotating(ASK);
 
   const dash = useQuery({ queryKey: ["dashboard"], queryFn: () => get<Dash>("/dashboard"), refetchInterval: 30_000 });
   const perf = useQuery({ queryKey: ["perf", range], queryFn: () => get<{ points: Point[] }>(`/dashboard/performance?range=${range}`) });
+  const singles = useQuery({ queryKey: ["single-messages"], queryFn: () => get<Single[]>("/messages/single?size=8"), refetchInterval: 60_000 });
   const sent = useCountUp(dash.data?.emails_sent_6m ?? 0);
 
   const mbs = dash.data?.mailboxes ?? [];
@@ -56,6 +60,7 @@ export default function Dashboard() {
 
       <div className="flex items-center gap-3 flex-wrap in" style={{ ["--d" as string]: 1 }}>
         <Link href="/campaigns?new=1" className="btn btn-primary"><Plus /> New campaign</Link>
+        <button className="btn btn-dark" onClick={() => setCompose(true)}><SquarePen /> Compose</button>
         <Link href="/mailboxes" className="btn btn-dark">Connect mailbox</Link>
         <Link href="/leads" className="btn btn-dark">Import leads</Link>
         <form onSubmit={submitAsk} className="ask ml-auto" style={{ width: "min(380px, 100%)" }}>
@@ -200,6 +205,38 @@ export default function Dashboard() {
           )}
         </div>
       </article>
+
+      {!!singles.data?.length && (
+        <article className="card in" style={{ ["--d" as string]: 4 }}>
+          <div className="flex items-center justify-between">
+            <div><h3>Single emails</h3><p className="card-sub">Emails you composed outside of campaigns</p></div>
+            <button className="btn btn-ghost btn-sm" onClick={() => setCompose(true)}><SquarePen /> Compose</button>
+          </div>
+          <div className="overflow-x-auto mt-3">
+            <table className="table">
+              <thead><tr><th>To</th><th>Subject</th><th>From</th><th>Sent</th><th>Engagement</th></tr></thead>
+              <tbody>{singles.data.map((m) => (
+                <tr key={m.id}>
+                  <td className="max-w-[200px] truncate-1">{m.to}</td>
+                  <td className="max-w-[260px] truncate-1 text-txt-2" title={m.subject}>{m.subject}</td>
+                  <td className="max-w-[200px] truncate-1 text-txt-2 text-[12.5px]">{m.mailbox ?? "—"}</td>
+                  <td className="text-txt-2 text-[12.5px] whitespace-nowrap">{ago(m.sent_at)}</td>
+                  <td>
+                    <div className="flex gap-1 flex-wrap">
+                      {m.status !== "sent" ? <StatusBadge status={m.status} /> : !m.opened_at && !m.replied_at ? <span className="badge b-gray">Not opened</span> : null}
+                      {m.opened_at && <span className="badge b-pink" title={new Date(m.opened_at).toLocaleString()}><Eye /> Opened{m.open_count > 1 ? ` ×${m.open_count}` : ""}</span>}
+                      {m.clicked_at && <span className="badge b-blue"><MousePointerClick /> Clicked</span>}
+                      {m.replied_at && <span className="badge b-green"><Reply /> Replied</span>}
+                    </div>
+                  </td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </article>
+      )}
+
+      <ComposeModal open={compose} onClose={() => setCompose(false)} />
     </>
   );
 }

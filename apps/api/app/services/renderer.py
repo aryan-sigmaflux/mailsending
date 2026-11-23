@@ -10,7 +10,7 @@ Syntax
 import random
 import re
 import uuid
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -142,6 +142,26 @@ def render(
         pixel = f"{tracking_base()}/o/{sign_message(message_id, 'o')}.gif"
         body += f'<img src="{pixel}" width="1" height="1" alt="" style="display:block;border:0;width:1px;height:1px" />'
     return subj.strip(), body
+
+
+def strip_tracking(html: str) -> str:
+    """Remove the open pixel and unwrap tracked links, for showing a sent email inside the app.
+
+    Rendering the stored HTML as-is would load the pixel / follow tracked links from the sender's own browser and
+    register fake opens and clicks.
+    """
+    if "/t/o/" not in (html or "") and "/t/c/" not in (html or ""):
+        return html or ""
+    soup = BeautifulSoup(html, "html.parser")
+    for img in soup.find_all("img", src=True):
+        if "/t/o/" in img["src"]:
+            img.decompose()
+    for a in soup.find_all("a", href=True):
+        if "/t/c/" in a["href"]:
+            original = parse_qs(urlparse(a["href"]).query).get("u")
+            if original:
+                a["href"] = original[0]
+    return str(soup)
 
 
 def html_to_text(html: str) -> str:
