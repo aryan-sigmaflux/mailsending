@@ -1,0 +1,15 @@
+# Reverse proxy + automatic HTTPS (Let's Encrypt). Domains come from deploy/.env.
+# Only runs when COMPOSE_PROFILES=proxy is set in deploy/.env.
+{
+	email {$ACME_EMAIL}
+}
+
+{$WEB_DOMAIN} {
+	encode gzip
+	reverse_proxy web:3010
+}
+
+{$API_DOMAIN} {
+	encode gzip
+	reverse_proxy api:8000
+}
