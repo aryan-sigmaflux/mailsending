@@ -1,7 +1,7 @@
 # Production stack. Run from the repo root:
 #   docker compose -p sfmail -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
 # Postgres and Redis are internal only (no host ports). The web app and API are published on BIND_ADDR
-# (default 127.0.0.1) and reach the internet through the host nginx (deploy/nginx/sendharbor.conf).
+# (default 127.0.0.1) and reach the internet through the aaPanel nginx (deploy/nginx/sendharbor.conf).
 # Auto-deployed by .github/workflows/deploy.yml; one-time server setup in deploy/DEPLOY.md.
 name: sfmail
 

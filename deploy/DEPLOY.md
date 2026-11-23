@@ -13,14 +13,14 @@ It can also be started by hand from the repo's **Actions** tab (Deploy to VPS �
 ## How traffic flows
 
 ```
-https://sendharbor.sigmaflux.in ── host nginx (80/443, certbot TLS)
+https://sendharbor.sigmaflux.in ── aaPanel nginx (80/443, panel Let's Encrypt cert)
      /api/*, /health  → 127.0.0.1:8010  (sfmail-api)
      everything else  → 127.0.0.1:3010  (sfmail-web)
 ```
 
 BillionMail already uses 25, 465, 587, 143, 993, 8080 and 41443. This stack only adds 3010 and 8010, bound to
 127.0.0.1. Postgres and Redis have no host ports. Container, volume and network names all start with `sfmail`.
-The nginx site is a separate file, so other sites on the host nginx are not touched.
+The proxy rules live in their own file in the site's aaPanel extension folder, so other sites are not touched.
 
 ## One-time setup (run on the server, one step at a time)
 
@@ -57,25 +57,19 @@ The nginx site is a separate file, so other sites on the host nginx are not touc
    ```
    Check: `curl -s http://127.0.0.1:8010/health`
 
-5. **Add the nginx site.**
+5. **Add the proxy rules to the existing aaPanel site.** The panel site for `sendharbor.sigmaflux.in` already
+   listens on 80/443 with a Let's Encrypt certificate, and includes every `*.conf` in its extension folder.
    ```bash
-   cp /opt/sendharbor/deploy/nginx/sendharbor.conf /etc/nginx/sites-available/sendharbor.conf
-   ln -s /etc/nginx/sites-available/sendharbor.conf /etc/nginx/sites-enabled/sendharbor.conf
-   nginx -t && systemctl reload nginx
+   cp /opt/sendharbor/deploy/nginx/sendharbor.conf /www/server/panel/vhost/nginx/extension/sendharbor.sigmaflux.in/sendharbor-app.conf
+   nginx -t && nginx -s reload
    ```
-   If `/etc/nginx/sites-available` doesn't exist, copy the file to `/etc/nginx/conf.d/sendharbor.conf` instead.
+   Don't add a reverse proxy for this site in the panel UI as well, or nginx reports a duplicate `location /`.
 
-6. **Get the HTTPS certificate** (DNS A record `sendharbor.sigmaflux.in → 185.193.19.137` must already resolve).
-   ```bash
-   apt-get update && apt-get install -y certbot python3-certbot-nginx
-   certbot --nginx -d sendharbor.sigmaflux.in --redirect
-   ```
-   Certbot adds the 443 block to the site file and sets up automatic renewal.
-
-7. Open https://sendharbor.sigmaflux.in and log in with the super admin from `deploy/.env`.
+6. Open https://sendharbor.sigmaflux.in and log in with the super admin from `deploy/.env`.
+   The certificate keeps renewing through the panel (the rules leave `/.well-known/acme-challenge/` to it).
 
 From here on, pushes to `main` deploy automatically. The nginx file is not redeployed; if it ever changes in the repo,
-copy it again (step 5) and re-run certbot (step 6).
+copy it again (step 5).
 
 If you use Google/Microsoft OAuth, register the redirect URIs
 `https://sendharbor.sigmaflux.in/api/v1/mailboxes/oauth/google/callback` and `…/microsoft/callback`.
