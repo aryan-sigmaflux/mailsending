@@ -114,7 +114,9 @@ export default function InboxView() {
               </div>
               <div className="tile" style={{ boxShadow: "inset 0 0 0 1px rgba(238,178,220,.35)" }}>
                 <div className="text-[11.5px] text-pink mb-2">Their reply · {ago(sel.replied_at)}</div>
-                <pre className="whitespace-pre-wrap font-sans text-[13.5px] leading-relaxed">{sel.reply}</pre>
+                {sel.reply?.trim()
+                  ? <pre className="whitespace-pre-wrap font-sans text-[13.5px] leading-relaxed">{sel.reply}</pre>
+                  : <p className="text-[13px] text-muted italic">The text of this reply couldn&apos;t be read — open it in the mailbox ({sel.mailbox ?? "inbox"}) to see it.</p>}
               </div>
               <details className="tile">
                 <summary className="text-[12px] text-muted cursor-pointer">Your email{sel.stage ? ` (${stageLabel(sel.stage, sel.campaign_kind)})` : ""} · {ago(sel.sent_at)}</summary>

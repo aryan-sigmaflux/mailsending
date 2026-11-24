@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import imaplib
+import re
 import ssl
 import time
 import uuid
@@ -153,10 +154,84 @@ async def test_connection(mb: Mailbox) -> dict:
     return out
 
 
-def fetch_headers_since(c: Conn, last_uid: int, limit: int = 200) -> tuple[list[dict], int]:
-    """Fetch new INBOX messages' key headers (+ a text snippet) with UID > last_uid."""
+def text_body(m) -> str:
+    """The readable text of an email: its text/plain part, else its text/html part converted to text.
+    `m` must be parsed with email.policy.default (the legacy Message class has no get_body())."""
+    from app.services.renderer import html_to_text
+
+    part = m.get_body(preferencelist=("plain", "html"))
+    if part is None:
+        return ""
+    try:
+        content = part.get_content()
+    except Exception:  # noqa: BLE001 — unknown charset / broken encoding
+        raw = part.get_payload(decode=True) or b""
+        content = raw.decode(part.get_content_charset() or "utf-8", errors="replace")
+    if not isinstance(content, str):
+        return ""
+    if part.get_content_type() == "text/html":
+        content = html_to_text(content)
+    return content.replace("\r\n", "\n").replace("\r", "\n")
+
+
+# Where the quoted earlier email starts in a reply (Gmail/Apple "On … wrote:", Outlook header blocks, "> " lines).
+_QUOTE_STARTS = [
+    re.compile(r"^[ \t]*On\b[^\n]*(?:\n[^\n]*){0,3}?\bwrote:[ \t]*$", re.M),
+    re.compile(r"^[ \t]*-{2,}[ \t]*Original Message[ \t]*-{2,}", re.M | re.I),
+    re.compile(r"^[ \t]*_{10,}[ \t]*$", re.M),
+    re.compile(r"^[ \t]*From:[^\n]*\n(?:[^\n]*\n){0,3}?[ \t]*(?:Sent|Date):", re.M),
+    re.compile(r"^[ \t]*>", re.M),
+]
+
+
+def strip_quoted(text: str) -> str:
+    """Just what the person wrote: cut the quoted thread below their reply. Falls back to the whole text
+    if cutting would leave nothing (e.g. they replied inline inside the quote)."""
+    text = (text or "").replace("\r\n", "\n").strip()
+    cut = min((m.start() for rx in _QUOTE_STARTS if (m := rx.search(text))), default=len(text))
+    return text[:cut].strip() or text
+
+
+def fetch_reply_bodies(c: Conn, message_ids: list[str]) -> dict[str, str]:
+    """Find the replies to our sent emails (by Message-ID) in INBOX and return {message_id: reply text}.
+    Used to recover replies that were detected but stored without their text."""
     import email
-    from email.header import decode_header, make_header
+    import email.policy
+
+    imap = _imap_login(c)
+    out: dict[str, str] = {}
+    try:
+        imap.select("INBOX", readonly=True)
+        for mid in message_ids:
+            uids: list[bytes] = []
+            for header in ("In-Reply-To", "References"):
+                typ, data = imap.uid("search", None, "HEADER", header, f'"{mid}"')
+                uids = (data[0] or b"").split() if typ == "OK" and data else []
+                if uids:
+                    break
+            for uid in reversed(uids):  # newest first
+                typ, msg_data = imap.uid("fetch", uid.decode(), "(BODY.PEEK[])")
+                if typ != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
+                    continue
+                m = email.message_from_bytes(msg_data[0][1], policy=email.policy.default)
+                if (m.get("Auto-Submitted") or "").lower().startswith("auto-"):
+                    continue
+                body = text_body(m)
+                if body.strip():
+                    out[mid] = body
+                    break
+        return out
+    finally:
+        try:
+            imap.logout()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def fetch_headers_since(c: Conn, last_uid: int, limit: int = 200) -> tuple[list[dict], int]:
+    """Fetch new INBOX messages' key headers (+ the text body) with UID > last_uid."""
+    import email
+    import email.policy
 
     imap = _imap_login(c)
     try:
@@ -168,23 +243,20 @@ def fetch_headers_since(c: Conn, last_uid: int, limit: int = 200) -> tuple[list[
             typ, msg_data = imap.uid("fetch", str(uid), "(BODY.PEEK[])")
             if typ != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
                 continue
-            m = email.message_from_bytes(msg_data[0][1])
-            body = ""
-            part = m.get_body(preferencelist=("plain", "html")) if hasattr(m, "get_body") else None
-            if part is None and not m.is_multipart():
-                part = m
-            if part is not None:
-                try:
-                    body = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
-                except (AttributeError, LookupError):
-                    body = ""
+            # policy.default gives EmailMessage (get_body, decoded headers); the legacy default dropped every
+            # multipart reply's text (e.g. all Gmail replies).
+            m = email.message_from_bytes(msg_data[0][1], policy=email.policy.default)
+            try:
+                body = text_body(m)
+            except Exception:  # noqa: BLE001 — never lose the reply over a malformed body
+                body = ""
             found.append({
                 "uid": uid,
-                "from": str(make_header(decode_header(m.get("From", "")))),
-                "subject": str(make_header(decode_header(m.get("Subject", "")))),
-                "in_reply_to": (m.get("In-Reply-To") or "").strip(),
-                "references": (m.get("References") or "").split(),
-                "auto_submitted": (m.get("Auto-Submitted") or "").lower(),
+                "from": str(m.get("From", "")),
+                "subject": str(m.get("Subject", "")),
+                "in_reply_to": str(m.get("In-Reply-To") or "").strip(),
+                "references": str(m.get("References") or "").split(),
+                "auto_submitted": str(m.get("Auto-Submitted") or "").lower(),
                 "content_type": m.get_content_type(),
                 "body": body[:20000],
             })

@@ -387,7 +387,7 @@ async def poll_mailbox(mailbox_id: uuid.UUID) -> int:
                 if not msg.replied_at:
                     msg.replied_at = utcnow()
                 msg.opened_at = msg.opened_at or msg.replied_at  # a reply implies it was read (images may be blocked)
-                msg.reply_snippet = it["body"][:4000]
+                msg.reply_snippet = transport.strip_quoted(it["body"])[:4000]  # their words, not the quoted thread
                 db.add(Event(user_id=mb.user_id, message_id=msg.id, campaign_id=msg.campaign_id,
                              contact_id=msg.contact_id, kind="reply", meta={"from": it["from"], "subject": it["subject"]}))
                 camp = await db.get(Campaign, msg.campaign_id) if msg.campaign_id else None
@@ -396,4 +396,22 @@ async def poll_mailbox(mailbox_id: uuid.UUID) -> int:
             handled += 1
         mb.imap_last_uid = last_uid
         await db.commit()
+
+        # Replies detected before the body parser was fixed were stored with an empty text ("").
+        # Look each one up in INBOX once; whatever the outcome, mark it tried (NULL) so it isn't searched again.
+        empty = (await db.execute(
+            select(Message).where(Message.mailbox_id == mb.id, Message.replied_at.is_not(None), Message.reply_snippet == "")
+            .limit(25)
+        )).scalars().all()
+        if empty:
+            try:
+                bodies = await asyncio.to_thread(transport.fetch_reply_bodies, conn, [m.message_id_header for m in empty])
+            except Exception as e:  # noqa: BLE001
+                log.warning("reply body backfill failed for %s: %s", mb.id, e)
+                bodies = None
+            if bodies is not None:
+                for m in empty:
+                    body = bodies.get(m.message_id_header)
+                    m.reply_snippet = transport.strip_quoted(body)[:4000] if body else None
+                await db.commit()
         return handled
