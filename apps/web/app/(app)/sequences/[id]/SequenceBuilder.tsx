@@ -12,7 +12,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { toast } from "@/components/toast";
 import { Field, Skeleton, Spinner, confirmAction } from "@/components/ui";
 import { get, post, put } from "@/lib/api";
-import { importProblems, parseSequenceJson, sampleSequenceJson, type ImportResult } from "@/lib/sequenceJson";
+import { importProblems, parseSequenceJson, resolvePending, sampleSequenceJson, type ImportResult } from "@/lib/sequenceJson";
 import type { GraphEdge, GraphNode, NodeKind, Sequence, Template } from "@/lib/types";
 
 type Data = Record<string, unknown>;
@@ -206,31 +206,36 @@ function download(filename: string, text: string) {
 }
 
 /** "Import JSON" dropdown: pick or drop a .json file, or download the sample. */
-function ImportMenu({ templates, onImport }: { templates: Template[]; onImport: (r: ImportResult) => boolean }) {
+function ImportMenu({ templates, onImport }: { templates: Template[]; onImport: (r: ImportResult) => Promise<boolean> }) {
   const [open, setOpen] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
   const [drag, setDrag] = useState(false);
+  const [busy, setBusy] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const file = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as globalThis.Node)) setOpen(false); };
+    const away = (e: PointerEvent) => { if (box.current && !box.current.contains(e.target as globalThis.Node)) setOpen(false); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    addEventListener("mousedown", away);
+    // Capture phase: the React Flow canvas stops pointer events from bubbling, so a normal listener never hears them.
+    addEventListener("pointerdown", away, true);
     addEventListener("keydown", esc);
-    return () => { removeEventListener("mousedown", away); removeEventListener("keydown", esc); };
+    return () => { removeEventListener("pointerdown", away, true); removeEventListener("keydown", esc); };
   }, [open]);
 
   async function read(f: File | undefined) {
-    if (!f) return;
+    if (!f || busy) return;
     setProblems([]);
     if (f.size > 1_000_000) { setProblems(["That file is over 1 MB — a sequence JSON is only a few KB."]); return; }
+    setBusy(true);
     try {
-      if (onImport(parseSequenceJson(await f.text(), templates))) setOpen(false);
+      // Whole file is validated first, so nothing (no templates) is created from a file with mistakes.
+      if (await onImport(parseSequenceJson(await f.text(), templates))) setOpen(false);
     } catch (e) {
       setProblems(importProblems(e));
     } finally {
+      setBusy(false);
       if (file.current) file.current.value = "";
     }
   }
@@ -241,21 +246,22 @@ function ImportMenu({ templates, onImport }: { templates: Template[]; onImport: 
         <Upload /> Import JSON <ChevronDown className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div role="dialog" aria-label="Import sequence from JSON" className="card absolute right-0 z-30 flex flex-col gap-3"
-          style={{ top: "calc(100% + 8px)", width: 380, maxWidth: "calc(100vw - 32px)", boxShadow: "0 18px 50px rgba(0,0,0,.55), inset 0 0 0 1px var(--stroke)" }}>
+        <div role="dialog" aria-label="Import sequence from JSON" className="card flex flex-col gap-3"
+          // position inline: .card sets position: relative outside Tailwind's layers, which beats the `absolute` utility
+          style={{ position: "absolute", right: 0, zIndex: 30, top: "calc(100% + 8px)", width: 380, maxWidth: "calc(100vw - 32px)", boxShadow: "0 18px 50px rgba(0,0,0,.55), inset 0 0 0 1px var(--stroke)" }}>
           <div>
             <h3 className="flex items-center gap-2"><FileBraces width={17} /> Import from JSON</h3>
-            <p className="card-sub">Builds the steps from a .json file and replaces what&apos;s on the canvas. Nothing is saved until you click Save.</p>
+            <p className="card-sub">Builds the steps — and creates the templates the file defines — then replaces what&apos;s on the canvas. The sequence itself is saved when you click Save.</p>
           </div>
           <label
-            className="tile flex flex-col items-center justify-center gap-1.5 text-center cursor-pointer"
+            className={`tile flex flex-col items-center justify-center gap-1.5 text-center ${busy ? "opacity-60" : "cursor-pointer"}`}
             style={{ padding: "18px 12px", boxShadow: `inset 0 0 0 1px ${drag ? "var(--pink)" : "var(--stroke)"}`, borderStyle: "dashed" }}
             onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
             onDrop={(e) => { e.preventDefault(); setDrag(false); read(e.dataTransfer.files[0]); }}>
-            <Upload width={20} className="text-pink" />
-            <span className="text-[13.5px]">Choose a JSON file</span>
-            <small className="text-muted">or drop it here</small>
-            <input ref={file} type="file" accept=".json,application/json" className="sr-only" aria-label="JSON file" onChange={(e) => read(e.target.files?.[0])} />
+            {busy ? <Spinner size={20} /> : <Upload width={20} className="text-pink" />}
+            <span className="text-[13.5px]">{busy ? "Importing…" : "Choose a JSON file"}</span>
+            <small className="text-muted">{busy ? "Creating templates and building the steps" : "or drop it here"}</small>
+            <input ref={file} type="file" accept=".json,application/json" className="sr-only" aria-label="JSON file" disabled={busy} onChange={(e) => read(e.target.files?.[0])} />
           </label>
           {problems.length > 0 && (
             <div className="flex flex-col gap-1 text-[12.5px] text-red" role="alert">
@@ -263,7 +269,7 @@ function ImportMenu({ templates, onImport }: { templates: Template[]; onImport: 
               <ul className="list-disc pl-4 flex flex-col gap-0.5 max-h-40 overflow-y-auto">{problems.map((p) => <li key={p}>{p}</li>)}</ul>
             </div>
           )}
-          <button className="btn btn-sm btn-dark self-start" onClick={() => download("sequence-sample.json", sampleSequenceJson(templates))}>
+          <button className="btn btn-sm btn-dark self-start" onClick={() => download("sequence-sample.json", sampleSequenceJson())}>
             <Download /> Download sample JSON
           </button>
         </div>
@@ -289,6 +295,16 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
   const [savedId, setSavedId] = useState(seq.id);
   const isDraft = !savedId;
 
+  const [fitPending, setFitPending] = useState(false);
+  useEffect(() => {
+    // Wait until every node now on the canvas has been measured (the imported ones, not the ones they replaced).
+    if (!fitPending || !nodes.length || !nodes.every((n) => n.measured?.width && n.measured?.height)) return;
+    // Clear the flag in the same frame as the fit: clearing it right away would re-run this effect, and its cleanup
+    // would cancel the fit before it happened.
+    const frame = requestAnimationFrame(() => { fitView({ padding: 0.15, duration: 300 }); setFitPending(false); });
+    return () => cancelAnimationFrame(frame);
+  }, [fitPending, nodes, fitView]);
+
   // Unsaved work: ask before the tab closes or reloads.
   useEffect(() => {
     if (!dirty) return;
@@ -297,10 +313,26 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
     return () => removeEventListener("beforeunload", warn);
   }, [dirty]);
 
-  function applyImport(r: ImportResult) {
+  async function applyImport(r: ImportResult) {
     const hasWork = dirty || !isDraft;
     if (hasWork && !confirmAction("Replace the steps on the canvas with the imported ones?")) return false;
-    const flow = toFlow(r.graph);
+
+    // Create the templates the file defines (one by one, so a failure says exactly which). If one fails, the ones
+    // already created stay and are reused by name when the same file is imported again — never duplicated.
+    const createdIds: string[] = [];
+    for (const t of r.newTemplates) {
+      try {
+        const made = await post<Template>("/templates", t);
+        createdIds.push(made.id);
+        qc.setQueryData<Template[]>(["templates"], (old) => [made, ...(old ?? [])]);
+      } catch (e) {
+        qc.invalidateQueries({ queryKey: ["templates"] });
+        throw new Error(`Couldn't create template “${t.name}” — ${(e as Error).message}. Import again to retry; templates already created will be reused.`);
+      }
+    }
+    if (createdIds.length) qc.invalidateQueries({ queryKey: ["templates"] });
+
+    const flow = toFlow(resolvePending(r.graph, createdIds));
     setNodes(flow.nodes);
     setEdges(flow.edges);
     if (r.name) setName(r.name);
@@ -308,10 +340,12 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
     setErrors([]);
     setWarnings(r.warnings);
     setDirty(true);
-    requestAnimationFrame(() => fitView({ padding: 0.2, duration: 300 }));
+    setFitPending(true); // zoom to the whole imported sequence once React Flow has measured the new nodes
     const steps = flow.nodes.length - 1;
-    if (r.warnings.length) toast.info(`Imported ${steps} steps — check the notes above the canvas`);
-    else toast.ok(`Imported ${steps} steps — click Save to keep them`);
+    const made = createdIds.length ? ` and created ${createdIds.length} template${createdIds.length === 1 ? "" : "s"}` : "";
+    const kept = r.reused.length ? ` (${r.reused.length} already existed — kept yours)` : "";
+    if (r.warnings.length) toast.info(`Imported ${steps} steps${made}${kept} — check the notes above the canvas`);
+    else toast.ok(`Imported ${steps} steps${made}${kept} — click Save to keep the sequence`);
     return true;
   }
 
@@ -361,7 +395,8 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
 
   return (
     <TemplatesCtx.Provider value={templates}>
-      <header className="head in">
+      {/* Above the canvas/sidebar (their entrance animation makes them stacking contexts) so the Import dropdown overlays them */}
+      <header className="head in" style={{ position: "relative", zIndex: 40 }}>
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <Link href="/sequences" className="btn btn-icon btn-dark" aria-label="Back"
             onClick={(e) => { if (dirty && !confirmAction(isDraft ? "Discard this new sequence? It hasn't been saved." : "Leave without saving your changes?")) e.preventDefault(); }}><ArrowLeft /></Link>
@@ -398,7 +433,7 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
             nodes={nodes} edges={edges} nodeTypes={nodeTypes} forceColorMode="dark"
             onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
             onNodeDragStop={() => setDirty(true)} onNodesDelete={() => setDirty(true)} onEdgesDelete={() => setDirty(true)}
-            onConnect={onConnect} fitView fitViewOptions={{ padding: 0.25 }} deleteKeyCode={["Backspace", "Delete"]}
+            onConnect={onConnect} fitView fitViewOptions={{ padding: 0.25 }} minZoom={0.2} deleteKeyCode={["Backspace", "Delete"]}
             defaultEdgeOptions={{ animated: true }} proOptions={{ hideAttribution: true }}
           >
             <Background gap={22} size={1.2} color="rgba(255,255,255,.08)" />
