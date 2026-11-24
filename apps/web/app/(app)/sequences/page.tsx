@@ -3,7 +3,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Plus, Trash, Workflow } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { toast } from "@/components/toast";
 import { Empty, PageHeader, Skeleton, confirmAction } from "@/components/ui";
 import { del, get, post } from "@/lib/api";
@@ -11,19 +10,17 @@ import { ago } from "@/lib/format";
 import type { Sequence } from "@/lib/types";
 
 export default function SequencesPage() {
-  const router = useRouter();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["sequences"], queryFn: () => get<Sequence[]>("/sequences") });
-  const create = useMutation({ mutationFn: () => post<Sequence>("/sequences", { name: "New sequence" }), onSuccess: (s) => router.push(`/sequences/${s.id}`), onError: toast.err });
   const dup = useMutation({ mutationFn: (id: string) => post(`/sequences/${id}/duplicate`), onSuccess: () => qc.invalidateQueries({ queryKey: ["sequences"] }), onError: toast.err });
   const remove = useMutation({ mutationFn: (id: string) => del(`/sequences/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ["sequences"] }), onError: toast.err });
 
   return (
     <>
       <PageHeader title="Sequences" sub="Visual multi-step workflows: Start → Send Mail → Wait → Condition"
-        actions={<button className="btn btn-primary" onClick={() => create.mutate()} disabled={create.isPending}><Plus /> New sequence</button>} />
+        actions={<Link href="/sequences/new" className="btn btn-primary"><Plus /> New sequence</Link>} />
       {q.isLoading ? <Skeleton h={160} /> : !q.data?.length ? (
-        <article className="card"><Empty icon={<Workflow />} title="No sequences yet" action={<button className="btn btn-primary" onClick={() => create.mutate()}><Plus /> Build a sequence</button>}>Chain emails, waits and open/click/reply conditions on a canvas.</Empty></article>
+        <article className="card"><Empty icon={<Workflow />} title="No sequences yet" action={<Link href="/sequences/new" className="btn btn-primary"><Plus /> Build a sequence</Link>}>Chain emails, waits and open/click/reply conditions on a canvas — or import one from JSON.</Empty></article>
       ) : (
         <div className="grid gap-4 in" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))" }}>
           {q.data.map((s, i) => {

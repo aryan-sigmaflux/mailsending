@@ -5,13 +5,14 @@ import {
   addEdge, Background, Controls, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow,
   type Connection, type Edge, type Node, type NodeProps,
 } from "@xyflow/react";
-import { ArrowLeft, CircleExclamationPoint, Clock, GitBranch, Mail, Play, Plus, Save, Search, Trash, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, CircleExclamationPoint, Clock, Download, FileBraces, GitBranch, Mail, Play, Plus, Save, Search, Trash, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/components/toast";
-import { Field, Skeleton, Spinner } from "@/components/ui";
-import { get, put } from "@/lib/api";
+import { Field, Skeleton, Spinner, confirmAction } from "@/components/ui";
+import { get, post, put } from "@/lib/api";
+import { importProblems, parseSequenceJson, sampleSequenceJson, type ImportResult } from "@/lib/sequenceJson";
 import type { GraphEdge, GraphNode, NodeKind, Sequence, Template } from "@/lib/types";
 
 type Data = Record<string, unknown>;
@@ -177,16 +178,142 @@ function Inspector({ node, onChange, onDelete, templates }: { node: Node | null;
   );
 }
 
+/** What a brand-new sequence starts with (same as the API's default). Nothing is stored until the first Save. */
+const DRAFT: Sequence = {
+  id: "", name: "New sequence", description: "", created_at: "", updated_at: "",
+  graph: {
+    nodes: [
+      { id: "start", type: "start", position: { x: 80, y: 200 }, data: { label: "Start" } },
+      { id: "send-1", type: "send", position: { x: 360, y: 180 }, data: { label: "Email 1", template_ids: [], same_thread: true } },
+      { id: "wait-1", type: "wait", position: { x: 660, y: 190 }, data: { label: "Wait", days: 2, hours: 0, minutes: 0, working_days_only: true } },
+      { id: "send-2", type: "send", position: { x: 940, y: 180 }, data: { label: "Follow-up", template_ids: [], same_thread: true } },
+    ],
+    edges: [
+      { id: "e1", source: "start", target: "send-1" },
+      { id: "e2", source: "send-1", target: "wait-1" },
+      { id: "e3", source: "wait-1", target: "send-2" },
+    ],
+  },
+};
+
+function download(filename: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** "Import JSON" dropdown: pick or drop a .json file, or download the sample. */
+function ImportMenu({ templates, onImport }: { templates: Template[]; onImport: (r: ImportResult) => boolean }) {
+  const [open, setOpen] = useState(false);
+  const [problems, setProblems] = useState<string[]>([]);
+  const [drag, setDrag] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const file = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as globalThis.Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    addEventListener("mousedown", away);
+    addEventListener("keydown", esc);
+    return () => { removeEventListener("mousedown", away); removeEventListener("keydown", esc); };
+  }, [open]);
+
+  async function read(f: File | undefined) {
+    if (!f) return;
+    setProblems([]);
+    if (f.size > 1_000_000) { setProblems(["That file is over 1 MB — a sequence JSON is only a few KB."]); return; }
+    try {
+      if (onImport(parseSequenceJson(await f.text(), templates))) setOpen(false);
+    } catch (e) {
+      setProblems(importProblems(e));
+    } finally {
+      if (file.current) file.current.value = "";
+    }
+  }
+
+  return (
+    <div className="relative" ref={box}>
+      <button className="btn btn-dark" onClick={() => { setOpen((o) => !o); setProblems([]); }} aria-expanded={open} aria-haspopup="dialog">
+        <Upload /> Import JSON <ChevronDown className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div role="dialog" aria-label="Import sequence from JSON" className="card absolute right-0 z-30 flex flex-col gap-3"
+          style={{ top: "calc(100% + 8px)", width: 380, maxWidth: "calc(100vw - 32px)", boxShadow: "0 18px 50px rgba(0,0,0,.55), inset 0 0 0 1px var(--stroke)" }}>
+          <div>
+            <h3 className="flex items-center gap-2"><FileBraces width={17} /> Import from JSON</h3>
+            <p className="card-sub">Builds the steps from a .json file and replaces what&apos;s on the canvas. Nothing is saved until you click Save.</p>
+          </div>
+          <label
+            className="tile flex flex-col items-center justify-center gap-1.5 text-center cursor-pointer"
+            style={{ padding: "18px 12px", boxShadow: `inset 0 0 0 1px ${drag ? "var(--pink)" : "var(--stroke)"}`, borderStyle: "dashed" }}
+            onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
+            onDrop={(e) => { e.preventDefault(); setDrag(false); read(e.dataTransfer.files[0]); }}>
+            <Upload width={20} className="text-pink" />
+            <span className="text-[13.5px]">Choose a JSON file</span>
+            <small className="text-muted">or drop it here</small>
+            <input ref={file} type="file" accept=".json,application/json" className="sr-only" aria-label="JSON file" onChange={(e) => read(e.target.files?.[0])} />
+          </label>
+          {problems.length > 0 && (
+            <div className="flex flex-col gap-1 text-[12.5px] text-red" role="alert">
+              <b className="font-medium">Couldn&apos;t import this file:</b>
+              <ul className="list-disc pl-4 flex flex-col gap-0.5 max-h-40 overflow-y-auto">{problems.map((p) => <li key={p}>{p}</li>)}</ul>
+            </div>
+          )}
+          <button className="btn btn-sm btn-dark self-start" onClick={() => download("sequence-sample.json", sampleSequenceJson(templates))}>
+            <Download /> Download sample JSON
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
   const qc = useQueryClient();
+  const { fitView } = useReactFlow();
   const initial = useMemo(() => toFlow(seq.graph), [seq.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [name, setName] = useState(seq.name);
+  const [description, setDescription] = useState(seq.description);
   const [errors, setErrors] = useState<string[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [dirty, setDirty] = useState(false);
   const { screenToFlowPosition } = useReactFlow();
   const selected = nodes.find((n) => n.selected) ?? null;
+  // The id this editor saves to: empty until a new draft's first Save creates the sequence.
+  const [savedId, setSavedId] = useState(seq.id);
+  const isDraft = !savedId;
+
+  // Unsaved work: ask before the tab closes or reloads.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    addEventListener("beforeunload", warn);
+    return () => removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  function applyImport(r: ImportResult) {
+    const hasWork = dirty || !isDraft;
+    if (hasWork && !confirmAction("Replace the steps on the canvas with the imported ones?")) return false;
+    const flow = toFlow(r.graph);
+    setNodes(flow.nodes);
+    setEdges(flow.edges);
+    if (r.name) setName(r.name);
+    if (r.description !== null) setDescription(r.description);
+    setErrors([]);
+    setWarnings(r.warnings);
+    setDirty(true);
+    requestAnimationFrame(() => fitView({ padding: 0.2, duration: 300 }));
+    const steps = flow.nodes.length - 1;
+    if (r.warnings.length) toast.info(`Imported ${steps} steps — check the notes above the canvas`);
+    else toast.ok(`Imported ${steps} steps — click Save to keep them`);
+    return true;
+  }
 
   const onConnect = useCallback((c: Connection) => {
     setEdges((eds) => {
@@ -198,8 +325,25 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
   }, [setEdges]);
 
   const save = useMutation({
-    mutationFn: () => put<{ sequence: Sequence; errors: string[] }>(`/sequences/${seq.id}`, { name, description: seq.description, graph: fromFlow(nodes, edges) }),
-    onSuccess: (r) => { setErrors(r.errors); setDirty(false); qc.invalidateQueries({ queryKey: ["sequences"] }); r.errors.length ? toast.info("Saved — fix the highlighted issues before launching") : toast.ok("Sequence saved"); },
+    mutationFn: async () => {
+      const body = { name, description, graph: fromFlow(nodes, edges) };
+      // A new sequence only exists once it's saved the first time; the PUT that follows returns validation errors.
+      const id = savedId || (await post<Sequence>("/sequences", body)).id;
+      setSavedId(id); // even if the PUT below fails, never create a second copy on retry
+      return put<{ sequence: Sequence; errors: string[] }>(`/sequences/${id}`, body);
+    },
+    onSuccess: (r) => {
+      setErrors(r.errors);
+      setWarnings([]);
+      setDirty(false);
+      qc.invalidateQueries({ queryKey: ["sequences"] });
+      qc.setQueryData(["sequence", r.sequence.id], r.sequence);
+      const created = !location.pathname.endsWith(`/${r.sequence.id}`);
+      // Same page, now backed by the saved sequence (query seeded above so nothing reloads): just fix the URL.
+      if (created) window.history.replaceState(null, "", `/sequences/${r.sequence.id}`);
+      if (r.errors.length) toast.info("Saved — fix the highlighted issues before launching");
+      else toast.ok(created ? "Sequence created" : "Sequence saved");
+    },
     onError: toast.err,
   });
 
@@ -219,15 +363,27 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
     <TemplatesCtx.Provider value={templates}>
       <header className="head in">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <Link href="/sequences" className="btn btn-icon btn-dark" aria-label="Back"><ArrowLeft /></Link>
+          <Link href="/sequences" className="btn btn-icon btn-dark" aria-label="Back"
+            onClick={(e) => { if (dirty && !confirmAction(isDraft ? "Discard this new sequence? It hasn't been saved." : "Leave without saving your changes?")) e.preventDefault(); }}><ArrowLeft /></Link>
           <input className="input" style={{ fontSize: 20, background: "transparent", boxShadow: "none", padding: "4px 6px" }} value={name} onChange={(e) => { setName(e.target.value); setDirty(true); }} aria-label="Sequence name" />
+          {isDraft && <span className="badge b-gray flex-none" title="Nothing is stored until you click Save">Not saved yet</span>}
         </div>
-        <button className="btn btn-primary" onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? <Spinner /> : <><Save /> {dirty ? "Save" : "Saved"}</>}</button>
+        <div className="flex items-center gap-2">
+          <ImportMenu templates={templates} onImport={applyImport} />
+          <button className="btn btn-primary" onClick={() => save.mutate()} disabled={save.isPending || (!isDraft && !dirty)}>
+            {save.isPending ? <Spinner /> : <><Save /> {isDraft ? "Save sequence" : dirty ? "Save" : "Saved"}</>}
+          </button>
+        </div>
       </header>
 
       {errors.length > 0 && (
         <div className="card in" style={{ boxShadow: "inset 0 0 0 1px rgba(255,123,138,.45)", padding: 14 }}>
           {errors.map((e) => <div key={e} className="flex items-center gap-2 text-[13px] text-red"><CircleExclamationPoint width={15} /> {e}</div>)}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div className="card in" style={{ boxShadow: "inset 0 0 0 1px rgba(245,194,107,.45)", padding: 14 }} role="status">
+          {warnings.map((w) => <div key={w} className="flex items-center gap-2 text-[13px] text-amber"><CircleExclamationPoint width={15} className="flex-none" /> {w}</div>)}
         </div>
       )}
 
@@ -268,13 +424,21 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
 
 export default function SequenceBuilder() {
   const { id } = useParams<{ id: string }>();
-  const seq = useQuery({ queryKey: ["sequence", id], queryFn: () => get<Sequence>(`/sequences/${id}`) });
+  const isNew = id === "new";
+  const seq = useQuery({ queryKey: ["sequence", id], queryFn: () => get<Sequence>(`/sequences/${id}`), enabled: !!id && !isNew });
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => get<Template[]>("/templates") });
+  // Next keeps recently visited pages mounted (hidden) — so every time /sequences/new is shown, start a fresh draft
+  // instead of showing the last one (effects re-run when a hidden page becomes visible again).
+  const [draft, setDraft] = useState(0);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- runs on mount and on each re-show; that's the reset signal
+  useEffect(() => { if (isNew) setDraft((n) => n + 1); }, [isNew]);
   useEffect(() => { if (seq.error) toast.err(seq.error); }, [seq.error]);
-  if (!seq.data || !templates.data) return <Skeleton h={600} />;
+  const data = isNew ? DRAFT : seq.data;
+  if (!data || !templates.data || (isNew && !draft)) return <Skeleton h={600} />;
   return (
-    <ReactFlowProvider>
-      <Builder seq={seq.data} templates={templates.data} />
+    // Same key when a draft's first Save turns the URL into /sequences/<id>, so the editor isn't remounted.
+    <ReactFlowProvider key={`builder-${draft}`}>
+      <Builder seq={data} templates={templates.data} />
     </ReactFlowProvider>
   );
 }
