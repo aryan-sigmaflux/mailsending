@@ -5,7 +5,7 @@ import {
   addEdge, Background, Controls, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow,
   type Connection, type Edge, type Node, type NodeProps,
 } from "@xyflow/react";
-import { ArrowLeft, CircleExclamationPoint, Clock, GitBranch, Mail, Play, Plus, Save, Trash } from "lucide-react";
+import { ArrowLeft, CircleExclamationPoint, Clock, GitBranch, Mail, Play, Plus, Save, Search, Trash, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -101,6 +101,43 @@ const fromFlow = (nodes: Node[], edges: Edge[]): Sequence["graph"] => ({
   edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle ?? null }) satisfies GraphEdge),
 });
 
+const plain = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+
+/** Template checklist for a Send Mail step, with search (name, subject and body). Selected templates stay on top. */
+function TemplatePicker({ templates, ids, onChange }: { templates: Template[]; ids: string[]; onChange: (ids: string[]) => void }) {
+  const [q, setQ] = useState("");
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = templates
+    .filter((t) => !words.length || words.every((w) => `${t.name} ${t.subject} ${plain(t.body_html)}`.toLowerCase().includes(w)))
+    .sort((a, b) => Number(ids.includes(b.id)) - Number(ids.includes(a.id)));
+  return (
+    <div className="field">
+      <span>Templates {ids.length > 1 && <small className="text-pink">— one is picked at random per lead (even split)</small>}</span>
+      {templates.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
+          <input className="input" style={{ paddingLeft: 36, paddingRight: q ? 34 : undefined }} type="search" value={q} onChange={(e) => setQ(e.target.value)}
+            placeholder={`Search ${templates.length} templates…`} aria-label="Search templates" />
+          {q && <button type="button" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted" onClick={() => setQ("")} aria-label="Clear search"><X className="w-4 h-4" /></button>}
+        </div>
+      )}
+      {(q || ids.length > 0) && templates.length > 0 && (
+        <small className="text-muted">{q ? `${shown.length} of ${templates.length} match` : ""}{q && ids.length ? " · " : ""}{ids.length ? `${ids.length} selected` : ""}</small>
+      )}
+      <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto pr-1">
+        {templates.length === 0 && <small>No templates yet — <Link href="/templates" className="text-pink">create one</Link>.</small>}
+        {templates.length > 0 && shown.length === 0 && <small className="text-muted py-2">No templates match “{q}”.</small>}
+        {shown.map((t) => (
+          <label key={t.id} className="check tile" style={{ padding: "9px 12px" }}>
+            <input type="checkbox" checked={ids.includes(t.id)} onChange={(e) => onChange(e.target.checked ? [...ids, t.id] : ids.filter((x) => x !== t.id))} />
+            <span className="min-w-0"><span className="block truncate-1">{t.name}</span><small className="text-muted truncate-1 block">{t.subject || "No subject — follow-up"}</small></span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Inspector({ node, onChange, onDelete, templates }: { node: Node | null; onChange: (d: Data) => void; onDelete: () => void; templates: Template[] }) {
   if (!node) return <p className="text-[13px] text-muted">Select a node to edit it. Drag from a node&apos;s right handle to connect steps. Press Delete to remove a selected node or edge.</p>;
   const d = node.data as Data;
@@ -112,18 +149,7 @@ function Inspector({ node, onChange, onDelete, templates }: { node: Node | null;
       {kind !== "start" && <Field label="Label"><input className="input" value={(d.label as string) ?? ""} onChange={(e) => onChange({ ...d, label: e.target.value })} /></Field>}
       {kind === "send" && (
         <>
-          <div className="field">
-            <span>Templates {ids.length > 1 && <small className="text-pink">— one is picked at random per lead (even split)</small>}</span>
-            <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto pr-1">
-              {templates.length === 0 && <small>No templates yet — <Link href="/templates" className="text-pink">create one</Link>.</small>}
-              {templates.map((t) => (
-                <label key={t.id} className="check tile" style={{ padding: "9px 12px" }}>
-                  <input type="checkbox" checked={ids.includes(t.id)} onChange={(e) => onChange({ ...d, template_ids: e.target.checked ? [...ids, t.id] : ids.filter((x) => x !== t.id) })} />
-                  <span className="min-w-0"><span className="block truncate-1">{t.name}</span><small className="text-muted truncate-1 block">{t.subject || "No subject — follow-up"}</small></span>
-                </label>
-              ))}
-            </div>
-          </div>
+          <TemplatePicker key={node.id} templates={templates} ids={ids} onChange={(next) => onChange({ ...d, template_ids: next })} />
           <label className="check"><input type="checkbox" checked={d.same_thread !== false} onChange={(e) => onChange({ ...d, same_thread: e.target.checked })} /> Reply in the same thread as the previous email</label>
         </>
       )}
