@@ -409,7 +409,9 @@ async def analytics(campaign_id: uuid.UUID, user: CurrentUser, db: DB):
     )).all()]
 
     # ── Per step / template ──
-    steps = [{"node_id": nid, "template_id": tid, "template": name, "sent": s_, "opened": o, "clicked": cl, "replied": r, "bounced": b}
+    cg = g.campaign_graph(c)
+    steps = [{"node_id": nid, "stage": g.stage_of(cg, nid), "template_id": tid, "template": name,
+              "sent": s_, "opened": o, "clicked": cl, "replied": r, "bounced": b}
              for nid, tid, name, s_, o, cl, r, b, _ in (await db.execute(
                  select(Message.node_id, Message.template_id, Template.name, func.count().filter(delivered),
                         func.count(Message.opened_at), func.count(Message.clicked_at), func.count(Message.replied_at),

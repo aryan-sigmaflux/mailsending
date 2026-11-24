@@ -1,15 +1,15 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ArrowLeft, Bot, Clock, Eye, Link2, MousePointerClick, Reply, Send, ShieldAlert, TriangleExclamationPoint, UserMinus } from "lucide-react";
+import { Activity, ArrowLeft, ArrowUpRight, Bot, Clock, Eye, Link2, MousePointerClick, Reply, Send, ShieldAlert, TriangleExclamationPoint, UserMinus } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { PerfChart, type Metric, type Point } from "@/components/PerfChart";
 import { Empty, Meter, Seg, Skeleton, StatusBadge } from "@/components/ui";
 import { get } from "@/lib/api";
-import { DAYS, ago, num, pct } from "@/lib/format";
-import type { Campaign, Paged } from "@/lib/types";
+import { DAYS, ago, num, pct, stageLabel } from "@/lib/format";
+import type { Campaign, Paged, Stage } from "@/lib/types";
 
 interface Summary {
   leads: number; contacted: number; sent: number; delivered: number; bounced: number; failed: number; opened: number; opens: number;
@@ -22,7 +22,7 @@ interface Analytics {
   states: Record<string, number>;
   timeline: (Point & { clicked: number })[];
   heatmap: { dow: number; hour: number; n: number }[];
-  steps: { node_id: string | null; template: string | null; sent: number; opened: number; clicked: number; replied: number; bounced: number }[];
+  steps: { node_id: string | null; stage: Stage; template: string | null; sent: number; opened: number; clicked: number; replied: number; bounced: number }[];
   mailboxes: { mailbox_id: string | null; email: string; sent: number; opened: number; replied: number; bounced: number }[];
   links: { url: string; clicks: number; unique: number }[];
   activity: { kind: string; at: string; email: string | null; url: string | null; machine: string | null }[];
@@ -37,25 +37,26 @@ function dur(s: number | null) {
   return `${(s / 86400).toFixed(1)}d`;
 }
 
-function Kpi({ label, value, sub, icon, tone }: { label: string; value: string; sub?: string; icon: ReactNode; tone?: "red" }) {
-  return (
-    <article className="card">
+function Kpi({ label, value, sub, icon, tone, href }: { label: string; value: string; sub?: string; icon: ReactNode; tone?: "red"; href?: string }) {
+  const body = (
+    <>
       <div className="flex items-center justify-between text-[12.5px] text-txt-2"><span>{label}</span><span className="text-muted [&>svg]:w-4 [&>svg]:h-4">{icon}</span></div>
       <div className={`text-[26px] font-medium mt-2 ${tone === "red" ? "text-red" : ""}`}>{value}</div>
-      {sub && <div className="text-[12px] text-muted">{sub}</div>}
-    </article>
+      {sub && <div className="text-[12px] text-muted">{sub}{href && <ArrowUpRight className="inline w-3.5 h-3.5 ml-1 -mt-0.5" />}</div>}
+    </>
   );
+  return href ? <Link href={href} className="card hoverable block" title="See these replies in the Unibox">{body}</Link> : <article className="card">{body}</article>;
 }
 
 /** Sent → Delivered → Opened → Clicked → Replied, every bar relative to emails sent. */
-function Funnel({ s }: { s: Summary }) {
+function Funnel({ s, repliesHref }: { s: Summary; repliesHref: string }) {
   const rows = [["Sent", s.sent], ["Delivered", s.delivered], ["Opened", s.opened], ["Clicked", s.clicked], ["Replied", s.replied]] as const;
   return (
     <div className="flex flex-col gap-3 mt-4">
       {rows.map(([l, v], i) => (
         <div key={l}>
           <div className="flex justify-between text-[12.5px] mb-1.5">
-            <span className="text-txt-2">{l}</span>
+            {l === "Replied" && v > 0 ? <Link href={repliesHref} className="link">{l} <ArrowUpRight className="inline w-3.5 h-3.5 -mt-0.5" /></Link> : <span className="text-txt-2">{l}</span>}
             <span><b className="font-medium">{num(v)}</b> <span className="text-muted">{i === 0 ? "" : `· ${pct(v, i === 1 ? s.sent : s.delivered)}`}</span></span>
           </div>
           <Meter value={v} max={s.sent} />
@@ -120,6 +121,7 @@ export default function CampaignAnalytics() {
   const filteredClicks = d?.filtered.filter((f) => f.kind === "click").reduce((n, f) => n + f.count, 0) ?? 0;
   const reasons = Object.entries((d?.filtered ?? []).reduce<Record<string, number>>((m, f) => ({ ...m, [f.reason]: (m[f.reason] ?? 0) + f.count }), {})).sort((x, y) => y[1] - x[1]);
   const states = Object.entries(d?.states ?? {}).sort((x, y) => y[1] - x[1]);
+  const repliesHref = `/inbox?campaign=${id}`;
 
   return (
     <>
@@ -140,7 +142,7 @@ export default function CampaignAnalytics() {
             <Kpi label="Emails sent" value={num(s.sent)} sub={`${num(s.contacted)} of ${num(s.leads)} leads contacted`} icon={<Send />} />
             <Kpi label="Open rate" value={pct(s.opened, s.delivered)} sub={`${num(s.opened)} unique · ${num(s.opens)} total opens`} icon={<Eye />} />
             <Kpi label="Click rate" value={pct(s.clicked, s.delivered)} sub={`${num(s.clicked)} unique · ${num(s.clicks)} total clicks`} icon={<MousePointerClick />} />
-            <Kpi label="Reply rate" value={pct(s.replied, s.delivered)} sub={`${num(s.replied)} replies`} icon={<Reply />} />
+            <Kpi label="Reply rate" value={pct(s.replied, s.delivered)} sub={`${num(s.replied)} replies`} icon={<Reply />} href={s.replied ? repliesHref : undefined} />
             <Kpi label="Bounce rate" value={pct(s.bounced, s.sent)} sub={`${num(s.bounced)} bounced${s.failed ? ` · ${num(s.failed)} failed` : ""}`} icon={<TriangleExclamationPoint />} tone={s.sent && s.bounced / s.sent > 0.03 ? "red" : undefined} />
             <Kpi label="Unsubscribed" value={num(s.unsubscribed)} sub={pct(s.unsubscribed, s.delivered)} icon={<UserMinus />} />
           </div>
@@ -169,7 +171,7 @@ export default function CampaignAnalytics() {
           </article>
 
           <div className="grid gap-4 in" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
-            <article className="card"><h3>Funnel</h3><Funnel s={s} /></article>
+            <article className="card"><h3>Funnel</h3><Funnel s={s} repliesHref={repliesHref} /></article>
             <article className="card">
               <h3>Timing</h3>
               <div className="grid grid-cols-2 gap-3 mt-4">
@@ -200,10 +202,12 @@ export default function CampaignAnalytics() {
                   <thead><tr><th>Step</th><th>Template</th><th>Sent</th><th>Opened</th><th>Clicked</th><th>Replied</th><th>Bounced</th></tr></thead>
                   <tbody>{d.steps.map((x, i) => (
                     <tr key={i}>
-                      <td className="text-txt-2">{x.node_id ?? "—"}</td><td>{x.template ?? "—"}</td><td>{num(x.sent)}</td>
+                      <td className="text-txt-2">{x.node_id ? stageLabel(x.stage, c?.kind) : "—"}</td><td>{x.template ?? "—"}</td><td>{num(x.sent)}</td>
                       <td>{pct(x.opened, x.sent)} <small className="text-muted">({num(x.opened)})</small></td>
                       <td>{pct(x.clicked, x.sent)} <small className="text-muted">({num(x.clicked)})</small></td>
-                      <td>{pct(x.replied, x.sent)} <small className="text-muted">({num(x.replied)})</small></td>
+                      <td>{x.replied > 0 && x.node_id ? (
+                        <Link href={`${repliesHref}&stage=${encodeURIComponent(x.node_id)}`} className="link" title="See these replies in the Unibox">{pct(x.replied, x.sent)} <small>({num(x.replied)})</small></Link>
+                      ) : <>{pct(x.replied, x.sent)} <small className="text-muted">({num(x.replied)})</small></>}</td>
                       <td>{pct(x.bounced, x.sent)}</td>
                     </tr>
                   ))}</tbody>

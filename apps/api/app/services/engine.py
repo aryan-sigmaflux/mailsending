@@ -364,9 +364,13 @@ async def poll_mailbox(mailbox_id: uuid.UUID) -> int:
                 candidates += MSGID_RE.findall(it["body"])
             if not candidates:
                 continue
-            msg = (await db.execute(
-                select(Message).where(Message.user_id == mb.user_id, Message.message_id_header.in_(candidates)).limit(1)
-            )).scalar_one_or_none()
+            # A same-thread follow-up's References also list the earlier emails, so prefer the email they actually
+            # replied to (In-Reply-To), then the latest one in the thread — this is the stage the reply is credited to.
+            found = (await db.execute(
+                select(Message).where(Message.user_id == mb.user_id, Message.message_id_header.in_(candidates))
+                .order_by(Message.sent_at.desc())
+            )).scalars().all()
+            msg = next((m for m in found if m.message_id_header == it["in_reply_to"]), found[0] if found else None)
             if not msg:
                 continue
             cc = await db.get(CampaignContact, msg.campaign_contact_id) if msg.campaign_contact_id else None

@@ -6,9 +6,9 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.core.deps import DB, CurrentUser, get_owned
-from app.models import Campaign, Contact, Domain, Event, Mailbox, Message, UsageDaily
+from app.models import Campaign, Contact, Domain, Event, Mailbox, Message, Template, UsageDaily
 from app.routers.auth import build_usage
-from app.services import transport
+from app.services import graph, transport
 from app.services.renderer import strip_tracking
 
 router = APIRouter(tags=["dashboard"])
@@ -96,24 +96,61 @@ async def performance(user: CurrentUser, db: DB, range_: str = Query("1M", alias
 
 @router.get("/inbox")
 async def inbox(user: CurrentUser, db: DB, mailbox_id: uuid.UUID | None = None, campaign_id: uuid.UUID | None = None,
-                page: int = Query(1, ge=1), size: int = Query(30, le=100)):
-    stmt = (select(Message, Contact.first_name, Contact.last_name, Contact.company, Mailbox.email, Campaign.name)
+                node_id: str | None = None, page: int = Query(1, ge=1), size: int = Query(30, le=100)):
+    """Replies, newest first. Each one says which campaign it came from and which stage (sent email) was replied to."""
+    stmt = (select(Message, Contact.first_name, Contact.last_name, Contact.company, Mailbox.email, Campaign, Template.name)
             .outerjoin(Contact, Contact.id == Message.contact_id)
             .outerjoin(Mailbox, Mailbox.id == Message.mailbox_id)
             .outerjoin(Campaign, Campaign.id == Message.campaign_id)
+            .outerjoin(Template, Template.id == Message.template_id)
             .where(Message.user_id == user.id, Message.replied_at.is_not(None)))
     if mailbox_id:
         stmt = stmt.where(Message.mailbox_id == mailbox_id)
     if campaign_id:
         stmt = stmt.where(Message.campaign_id == campaign_id)
+    if node_id:
+        stmt = stmt.where(Message.node_id == node_id)
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (await db.execute(stmt.order_by(Message.replied_at.desc()).offset((page - 1) * size).limit(size))).all()
-    return {"total": total, "items": [
-        {"id": m.id, "to": m.to_email, "name": f"{fn or ''} {ln or ''}".strip(), "company": co, "mailbox": mb,
-         "campaign": cname, "subject": m.subject, "reply": m.reply_snippet, "replied_at": m.replied_at,
-         "sent_body": strip_tracking(m.body_html), "sent_at": m.sent_at}
-        for m, fn, ln, co, mb, cname in rows
-    ]}
+    graphs: dict[uuid.UUID, dict] = {}
+    items = []
+    for m, fn, ln, co, mb, camp, tname in rows:
+        stage = None
+        if camp:
+            g = graphs.setdefault(camp.id, graph.campaign_graph(camp))
+            stage = {**graph.stage_of(g, m.node_id), "template": tname}
+        items.append({
+            "id": m.id, "to": m.to_email, "name": f"{fn or ''} {ln or ''}".strip(), "company": co, "mailbox": mb,
+            "campaign": camp.name if camp else None, "campaign_id": camp.id if camp else None,
+            "campaign_kind": camp.kind if camp else None, "stage": stage, "template": tname,
+            "subject": m.subject, "reply": m.reply_snippet, "replied_at": m.replied_at,
+            "sent_body": strip_tracking(m.body_html), "sent_at": m.sent_at,
+        })
+    return {"total": total, "items": items}
+
+
+@router.get("/inbox/campaigns")
+async def inbox_campaigns(user: CurrentUser, db: DB, mailbox_id: uuid.UUID | None = None):
+    """Campaigns that have replies, with the reply count per stage — drives the Unibox filters."""
+    stmt = (select(Message.campaign_id, Message.node_id, func.count())
+            .where(Message.user_id == user.id, Message.replied_at.is_not(None))
+            .group_by(Message.campaign_id, Message.node_id))
+    if mailbox_id:
+        stmt = stmt.where(Message.mailbox_id == mailbox_id)
+    counts = (await db.execute(stmt)).all()
+    ids = {cid for cid, _, _ in counts if cid}
+    camps = {c.id: c for c in (await db.execute(select(Campaign).where(Campaign.id.in_(ids)))).scalars()} if ids else {}
+    out: dict[uuid.UUID | None, dict] = {}
+    for cid, nid, n in counts:
+        c = camps.get(cid)
+        row = out.setdefault(cid, {"id": cid, "name": c.name if c else "Direct emails", "kind": c.kind if c else None,
+                                   "replies": 0, "stages": []})
+        row["replies"] += n
+        if c:
+            row["stages"].append({**graph.stage_of(graph.campaign_graph(c), nid), "replies": n})
+    for row in out.values():
+        row["stages"].sort(key=lambda s: (s["step"] or 1 << 30, s["name"] or "", s["node_id"] or ""))
+    return sorted(out.values(), key=lambda r: (r["id"] is None, -r["replies"], r["name"]))
 
 
 class ReplyIn(BaseModel):

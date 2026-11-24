@@ -216,3 +216,6 @@ export interface Paged<T> {
   total: number;
   items: T[];
 }
+
+/** Which stage of a campaign a sent email belongs to (step = how many emails the lead had received by then). */
+export interface Stage { node_id: string | null; step: number | null; of: number | null; name: string | null; template?: string | null }

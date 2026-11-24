@@ -107,3 +107,43 @@ def template_ids_in(graph: dict) -> list[str]:
         if n.get("type") == "send":
             ids.extend(n.get("data", {}).get("template_ids") or [])
     return list(dict.fromkeys(ids))
+
+
+DEFAULT_SEND_LABELS = {"", "send", "send mail"}
+
+
+def send_steps(graph: dict) -> dict[str, int]:
+    """Step number of every reachable Send node: how many emails a lead has received once it runs (1 = first email).
+    Branches share numbers, e.g. the Yes and No follow-ups after a condition are both step 2."""
+    by_id, steps = nodes_by_id(graph), {}
+    best: dict[str, int] = {}
+    queue = [(start_node(graph), 0)]
+    while queue:
+        nid, sends = queue.pop(0)
+        node = by_id.get(nid) if nid else None
+        if not node or best.get(nid, 1 << 30) <= sends:
+            continue
+        best[nid] = sends
+        if node.get("type") == "send":
+            sends += 1
+            steps[nid] = sends
+        queue.extend((e.get("target"), sends) for e in graph.get("edges", []) if e.get("source") == nid)
+    return steps
+
+
+def stage_of(graph: dict | None, node_id: str | None) -> dict:
+    """Which stage of the campaign a sent email belongs to: {node_id, step, of, name}."""
+    graph = graph or {}
+    steps = send_steps(graph)
+    node = nodes_by_id(graph).get(node_id or "") or {}
+    name = ((node.get("data") or {}).get("label") or "").strip()
+    return {"node_id": node_id, "step": steps.get(node_id or ""), "of": max(steps.values(), default=0) or None,
+            "name": None if name.lower() in DEFAULT_SEND_LABELS else name}
+
+
+def campaign_graph(c) -> dict:
+    """The graph a campaign's emails were sent from: frozen at launch; a never-launched single-template campaign
+    is its 1-step graph."""
+    if c.graph_snapshot:
+        return c.graph_snapshot
+    return single_template_graph([str(t) for t in c.template_ids or []]) if c.kind == "single" else {}

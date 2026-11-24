@@ -43,3 +43,11 @@ export const TIMEZONES = [
   "UTC", "Asia/Kolkata", "Asia/Dubai", "Asia/Singapore", "Asia/Tokyo", "Europe/London", "Europe/Berlin", "Europe/Paris",
   "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Sao_Paulo", "Australia/Sydney",
 ];
+
+/** "Step 2 of 3 · Follow-up" for sequences, "Initial email" for single-template campaigns. */
+export function stageLabel(s: { step: number | null; of: number | null; name: string | null; node_id: string | null } | null | undefined, kind?: string | null): string {
+  if (!s) return "";
+  if (kind === "single") return "Initial email";
+  if (!s.step) return s.name || s.node_id || "Unknown step";
+  return `Step ${s.step}${s.of && s.of > 1 ? ` of ${s.of}` : ""}${s.name ? ` · ${s.name}` : ""}`;
+}

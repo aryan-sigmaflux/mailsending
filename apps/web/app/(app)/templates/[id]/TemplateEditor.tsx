@@ -16,8 +16,11 @@ interface Preview { subject: string; html: string; contact: string | null; varia
 
 export default function TemplateEditor() {
   const { id } = useParams<{ id: string }>();
-  const tq = useQuery({ queryKey: ["template", id], queryFn: () => get<Template>(`/templates/${id}`), staleTime: Infinity });
-  if (!tq.data) return <Skeleton h={480} />;
+  // Always load the saved copy when the editor opens: the editor keeps its own draft state from `initial`, so a
+  // cached copy from an earlier visit (before the last save) would otherwise show up as the template's content.
+  // staleTime: Infinity only stops background refetches while editing.
+  const tq = useQuery({ queryKey: ["template", id], queryFn: () => get<Template>(`/templates/${id}`), staleTime: Infinity, refetchOnMount: "always" });
+  if (!tq.data || !tq.isFetchedAfterMount) return <Skeleton h={480} />;
   return <Editor key={id} initial={tq.data} />;
 }
 
@@ -48,7 +51,7 @@ function Editor({ initial }: { initial: Template }) {
 
   const save = useMutation({
     mutationFn: () => put<Template>(`/templates/${id}`, { name: t!.name, subject: t!.subject, body_html: t!.body_html, track_opens: t!.track_opens, track_clicks: t!.track_clicks }),
-    onSuccess: (saved) => { setT((cur) => cur && { ...cur, variables: saved.variables }); setDirty(false); toast.ok("Template saved"); qc.invalidateQueries({ queryKey: ["templates"] }); },
+    onSuccess: (saved) => { setT((cur) => cur && { ...cur, variables: saved.variables }); setDirty(false); toast.ok("Template saved"); qc.setQueryData(["template", id], saved); qc.invalidateQueries({ queryKey: ["templates"] }); },
     onError: toast.err,
   });
   const assist = useMutation({
