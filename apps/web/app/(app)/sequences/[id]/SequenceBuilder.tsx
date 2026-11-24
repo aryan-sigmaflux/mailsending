@@ -5,7 +5,7 @@ import {
   addEdge, Background, Controls, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow,
   type Connection, type Edge, type Node, type NodeProps,
 } from "@xyflow/react";
-import { ArrowLeft, ChevronDown, CircleExclamationPoint, Clock, Download, FileBraces, GitBranch, Mail, Play, Plus, Save, Search, Trash, Upload, X } from "lucide-react";
+import { ArrowLeft, Braces, ChevronDown, CircleExclamationPoint, Clock, Copy, Download, FileBraces, GitBranch, Mail, Play, Plus, Save, Search, Trash, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -13,6 +13,7 @@ import { toast } from "@/components/toast";
 import { Field, Skeleton, Spinner, confirmAction } from "@/components/ui";
 import { get, post, put } from "@/lib/api";
 import { importProblems, parseSequenceJson, resolvePending, sampleSequenceJson, type ImportResult } from "@/lib/sequenceJson";
+import { csvColumns, sequenceVariables } from "@/lib/templateVars";
 import type { GraphEdge, GraphNode, NodeKind, Sequence, Template } from "@/lib/types";
 
 type Data = Record<string, unknown>;
@@ -196,8 +197,8 @@ const DRAFT: Sequence = {
   },
 };
 
-function download(filename: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+function download(filename: string, text: string, type = "application/json") {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = Object.assign(document.createElement("a"), { href: url, download: filename });
   document.body.appendChild(a);
   a.click();
@@ -275,6 +276,64 @@ function ImportMenu({ templates, onImport }: { templates: Template[]; onImport: 
         </div>
       )}
     </div>
+  );
+}
+
+/** Every {{variable}} the sequence's selected templates use, and the lead-CSV column each one needs. */
+function VariablesCard({ nodes, templates }: { nodes: Node[]; templates: Template[] }) {
+  const byId = useMemo(() => new Map(templates.map((t) => [t.id, t])), [templates]);
+  const used = nodes.filter((n) => n.type === "send").flatMap((n) => {
+    const d = n.data as Data;
+    return ((d.template_ids as string[]) ?? []).map((id) => byId.get(id)).filter((t): t is Template => !!t)
+      .map((template) => ({ template, step: (d.label as string) || "Send Mail" }));
+  });
+  const vars = sequenceVariables(used);
+  const fields = vars.filter((v) => v.kind !== "system");
+  const auto = vars.filter((v) => v.kind === "system");
+  const cols = csvColumns(vars);
+  const nTemplates = new Set(used.map((u) => u.template.id)).size;
+
+  async function copy() {
+    try { await navigator.clipboard.writeText(cols.join(",")); toast.ok("CSV columns copied"); } catch { toast.err("Couldn't copy — select the columns and copy them manually"); }
+  }
+
+  return (
+    <aside className="card" aria-label="All variables">
+      <h3 className="flex items-center gap-2"><Braces width={17} /> All variables</h3>
+      {nTemplates === 0 ? (
+        <p className="card-sub">Pick templates in your Send Mail steps to see the variables they use — and the columns your lead CSV needs.</p>
+      ) : (
+        <>
+          <p className="card-sub">From the {nTemplates} template{nTemplates === 1 ? "" : "s"} in this sequence. Your lead CSV needs these columns:</p>
+          <code className="block mt-3 tile text-[12px] break-all" style={{ padding: "8px 10px" }} data-testid="csv-columns">{cols.join(", ")}</code>
+          {fields.length === 0 && <p className="text-[12.5px] text-muted mt-2">These templates don&apos;t use any lead variables — just the email column.</p>}
+          <ul className="flex flex-col gap-1.5 mt-3 max-h-72 overflow-y-auto pr-1">
+            {fields.map((v) => (
+              <li key={v.key} className="tile" style={{ padding: "8px 10px" }} data-var={v.name}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="badge b-pink flex-none">{`{{${v.name}}}`}</span>
+                  <span className="text-[12px] text-txt-2 truncate-1 min-w-0 flex-1" title={v.columns.join(" + ")}>→ {v.columns.join(" + ")}</span>
+                  {v.alwaysFallback
+                    ? <span className="badge b-gray" title="Every use has a fallback, so leads without it still read fine">optional</span>
+                    : <span className="badge b-amber" title="At least one use has no fallback — leads without this value get a blank there">needed</span>}
+                </div>
+                <div className="text-[11.5px] text-muted mt-1">
+                  {v.fallbacks.length > 0 && <>Fallback “{v.fallbacks.join("”, “")}” · </>}
+                  {[...new Set(v.uses.map((u) => u.step))].join(", ")}
+                </div>
+              </li>
+            ))}
+          </ul>
+          {auto.length > 0 && (
+            <p className="text-[11.5px] text-muted mt-3">Filled automatically: {auto.map((v) => `{{${v.name}}}`).join(", ")}</p>
+          )}
+          <div className="flex gap-2 mt-3 flex-wrap">
+            <button className="btn btn-sm btn-dark" onClick={copy}><Copy /> Copy columns</button>
+            <button className="btn btn-sm btn-dark" onClick={() => download("leads-template.csv", cols.join(",") + "\n", "text/csv")}><Download /> CSV template</button>
+          </div>
+        </>
+      )}
+    </aside>
   );
 }
 
@@ -441,7 +500,8 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
             <MiniMap pannable zoomable maskColor="rgba(10,8,9,.7)" nodeColor="#6f5868" />
           </ReactFlow>
         </article>
-        <aside className="card" style={{ alignSelf: "start" }}>
+        <div className="flex flex-col gap-4" style={{ alignSelf: "start" }}>
+        <aside className="card">
           <h3>Step settings</h3>
           <div className="mt-4">
             <Inspector
@@ -452,6 +512,8 @@ function Builder({ seq, templates }: { seq: Sequence; templates: Template[] }) {
             />
           </div>
         </aside>
+        <VariablesCard nodes={nodes} templates={templates} />
+        </div>
       </div>
     </TemplatesCtx.Provider>
   );
