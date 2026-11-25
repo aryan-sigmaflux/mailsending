@@ -53,6 +53,8 @@ class Contact(IdMixin, TimestampMixin, Base):
     verify_reason: Mapped[str] = mapped_column(String(200), default="")
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     unsubscribed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Domain whose website research (site_research row) belongs to this lead — set when research is queued.
+    research_domain: Mapped[str | None] = mapped_column(String(255))
 
 
 class Suppression(Base):

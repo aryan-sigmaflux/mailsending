@@ -5,8 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import (
-    admin, auth, campaigns, contacts, dashboard, domains, integrations, mailboxes, messages, sequences, templates, tracking,
-    verifier,
+    admin, auth, campaigns, contacts, dashboard, domains, integrations, mailboxes, messages, research, sequences, templates,
+    tracking, verifier,
 )
 from app.services import bulk_verify
 
@@ -28,8 +28,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth, admin, dashboard, domains, mailboxes, contacts, templates, sequences, campaigns, messages, verifier, integrations,
-          tracking):
+for r in (auth, admin, dashboard, domains, mailboxes, contacts, research, templates, sequences, campaigns, messages, verifier,
+          integrations, tracking):
     app.include_router(r.router, prefix=settings.API_PREFIX)
 
 

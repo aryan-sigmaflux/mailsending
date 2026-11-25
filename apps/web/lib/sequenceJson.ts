@@ -15,7 +15,12 @@
  *     { "type": "email", "label": "Intro", "templates": ["Intro"], "same_thread": true },
  *     { "type": "wait", "days": 2, "hours": 0, "minutes": 0, "working_days_only": true },
  *     { "type": "condition", "label": "Opened?", "check": "opened" | "clicked" | "replied",
- *       "yes": [ …steps ], "no": [ …steps ] }
+ *       "yes": [ …steps ], "no": [ …steps ] },
+ *     research / lead-data checks (leads without research take "no"):
+ *     { "type": "condition", "check": "researched" }
+ *     { "type": "condition", "check": "site_issue", "issues": ["multiple_h1", "missing_meta_description"], "match": "any" | "all" }
+ *     { "type": "condition", "check": "metric", "metric": "keyword_volume_max", "op": "lt" | "lte" | "gt" | "gte" | "eq", "value": 500 }
+ *     { "type": "condition", "check": "field", "field": "Industry", "op": "equals" | "contains" | "empty" | "not_empty" | "gt" | "lt", "value": "SaaS" }
  *   ]
  * }
  *
@@ -56,6 +61,7 @@ class ImportError extends Error {
 
 const isObj = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
 const key = (name: string) => name.trim().toLowerCase();
+const CHECKS = ["opened", "clicked", "replied", "researched", "site_issue", "metric", "field"];
 const TYPE_ALIASES: Record<string, "send" | "wait" | "condition"> = {
   email: "send", send: "send", send_mail: "send", mail: "send", wait: "wait", delay: "wait", condition: "condition", if: "condition",
 };
@@ -191,9 +197,22 @@ export function parseSequenceJson(text: string, templates: Template[]): ImportRe
         data = { label: label ?? "Wait", days, hours, minutes, working_days_only: raw.working_days_only === true };
       } else {
         const check = String(raw.check ?? "").toLowerCase();
-        if (!["opened", "clicked", "replied"].includes(check)) problems.push(`${p}: "check" must be "opened", "clicked" or "replied"`);
+        if (!CHECKS.includes(check)) problems.push(`${p}: "check" must be one of ${CHECKS.map((c) => `"${c}"`).join(", ")}`);
         if (i !== steps.length - 1) problems.push(`${p}: a condition must be the last step in its list — put the steps after it inside its "yes" / "no" lists`);
-        data = { label: label ?? `${check ? check[0].toUpperCase() + check.slice(1) : "Opened"}?`, check: check || "opened" };
+        data = { label: label ?? `${check ? check[0].toUpperCase() + check.slice(1).replace("_", " ") : "Opened"}?`, check: check || "opened" };
+        // Research / field checks carry their own settings; the server validates them when the sequence is saved.
+        if (check === "site_issue") {
+          const issues = Array.isArray(raw.issues) ? raw.issues.map(String) : typeof raw.issue === "string" ? [raw.issue] : [];
+          if (!issues.length) problems.push(`${p}: a "site_issue" check needs "issues": ["missing_h1", …]`);
+          Object.assign(data, { issues, match: raw.match === "all" ? "all" : "any" });
+        } else if (check === "metric") {
+          if (typeof raw.metric !== "string") problems.push(`${p}: a "metric" check needs "metric", e.g. "keyword_volume_max"`);
+          if (typeof raw.value !== "number") problems.push(`${p}: a "metric" check needs a numeric "value"`);
+          Object.assign(data, { metric: raw.metric, op: typeof raw.op === "string" ? raw.op : "lt", value: raw.value });
+        } else if (check === "field") {
+          if (typeof raw.field !== "string" || !raw.field) problems.push(`${p}: a "field" check needs "field", e.g. "Industry"`);
+          Object.assign(data, { field: raw.field, op: typeof raw.op === "string" ? raw.op : "equals", value: raw.value === undefined ? "" : String(raw.value) });
+        }
       }
 
       nodes.push({ id, type: kind, position, data });
@@ -289,7 +308,7 @@ export function sampleSequenceJson(): string {
       steps: "Run top to bottom. A condition must be the last step of its list; what happens next goes inside its \"yes\" and \"no\" lists (which can nest).",
       email: "templates: one or more template names from the \"templates\" list or your account (or their IDs). With several, each lead gets one at random. same_thread: reply in the previous email's thread (default true).",
       wait: "days / hours / minutes (whole numbers, at least one above 0). working_days_only skips non-working days from the campaign schedule (default false).",
-      condition: "check: \"opened\", \"clicked\" or \"replied\" — checked against every email sent to the lead in this campaign so far.",
+      condition: "check: \"opened\", \"clicked\" or \"replied\" — checked against every email sent to the lead in this campaign so far. Research checks (from Research leads): \"researched\"; \"site_issue\" with issues: [codes like \"multiple_h1\", \"missing_meta_description\", \"no_https\"] and match \"any\"/\"all\"; \"metric\" with metric (site_score, keyword_volume_max, keyword_volume_total, bid_high_max, cpc_max, performance_score…), op (lt, lte, gt, gte, eq) and a numeric value. \"field\" compares any lead value: field, op (equals, not_equals, contains, empty, not_empty, lt, gt), value. Leads without research take \"no\".",
     },
   };
   return JSON.stringify(sample, null, 2);

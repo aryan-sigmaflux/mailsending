@@ -14,7 +14,7 @@ import { Field, Skeleton, Spinner, confirmAction } from "@/components/ui";
 import { get, post, put } from "@/lib/api";
 import { importProblems, parseSequenceJson, resolvePending, sampleSequenceJson, type ImportResult } from "@/lib/sequenceJson";
 import { csvColumns, sequenceVariables } from "@/lib/templateVars";
-import type { GraphEdge, GraphNode, NodeKind, Sequence, Template } from "@/lib/types";
+import type { GraphEdge, GraphNode, NodeKind, ResearchCatalog, Sequence, Template } from "@/lib/types";
 
 type Data = Record<string, unknown>;
 const TemplatesCtx = createContext<Template[]>([]);
@@ -76,12 +76,45 @@ function WaitNode({ data, selected }: NodeProps) {
   );
 }
 
+/** Issue codes + research metrics (GET /research/catalog), shared by condition nodes and the inspector. */
+function useCatalog() {
+  return useQuery({ queryKey: ["research-catalog"], queryFn: () => get<ResearchCatalog>("/research/catalog"), staleTime: Infinity }).data;
+}
+
+const OPS: Record<string, string> = { lt: "<", lte: "≤", gt: ">", gte: "≥", eq: "=", neq: "≠" };
+const FIELD_OPS: [string, string][] = [
+  ["equals", "equals"], ["not_equals", "doesn't equal"], ["contains", "contains"], ["empty", "is empty"], ["not_empty", "is not empty"],
+  ["gt", "is greater than (number)"], ["lt", "is less than (number)"], ["gte", "is at least (number)"], ["lte", "is at most (number)"],
+];
+
+function conditionText(d: Data, cat?: ResearchCatalog): React.ReactNode {
+  const check = (d.check as string) ?? "opened";
+  if (["opened", "clicked", "replied"].includes(check)) return <>If lead <b className="text-txt">{check}</b> any previous email</>;
+  if (check === "researched") return <>If the lead&apos;s website <b className="text-txt">has been researched</b></>;
+  if (check === "site_issue") {
+    const codes = (d.issues as string[]) ?? [];
+    const names = codes.map((c) => cat?.issues.find((i) => i.code === c)?.title ?? c);
+    if (!names.length) return <span className="text-red">Pick website issues</span>;
+    return <>If website has {names.length > 1 ? (d.match === "all" ? "all of" : "any of") : ""} <b className="text-txt">{names.slice(0, 3).join(", ")}{names.length > 3 ? ` +${names.length - 3}` : ""}</b></>;
+  }
+  if (check === "metric") {
+    const m = cat?.metrics.find((x) => x.key === d.metric)?.label ?? (d.metric as string) ?? "metric";
+    return <>If <b className="text-txt">{m}</b> {OPS[(d.op as string) ?? "lt"]} <b className="text-txt">{String(d.value ?? "?")}</b></>;
+  }
+  if (check === "field") {
+    const op = FIELD_OPS.find(([k]) => k === d.op)?.[1] ?? "equals";
+    return <>If <b className="text-txt">{`{{${(d.field as string) || "field"}}}`}</b> {op}{["empty", "not_empty"].includes(d.op as string) ? "" : <> “<b className="text-txt">{String(d.value ?? "")}</b>”</>}</>;
+  }
+  return check;
+}
+
 function ConditionNode({ data, selected }: NodeProps) {
+  const cat = useCatalog();
   return (
     <>
       <Handle type="target" position={Position.Left} />
       <Shell kind="condition" selected={selected} title={(data.label as string) || "Condition"}>
-        If lead <b className="text-txt">{(data.check as string) ?? "opened"}</b> any previous email
+        {conditionText(data, cat)}
         <div className="flex justify-between mt-2 text-[11px]"><span className="text-green">Yes →</span></div>
         <div className="flex justify-between mt-3 text-[11px]"><span className="text-red">No →</span></div>
       </Shell>
@@ -140,6 +173,115 @@ function TemplatePicker({ templates, ids, onChange }: { templates: Template[]; i
   );
 }
 
+type VarList = { standard: { key: string; label: string }[]; custom: { key: string; label: string }[]; research?: { key: string; label: string }[] };
+
+/** Settings for a Condition node: engagement checks, website research checks, or any lead field. */
+function ConditionForm({ d, onChange }: { d: Data; onChange: (d: Data) => void }) {
+  const cat = useCatalog();
+  const vars = useQuery({ queryKey: ["variables"], queryFn: () => get<VarList>("/variables") }).data;
+  const [q, setQ] = useState("");
+  const check = (d.check as string) ?? "opened";
+  const picked = (d.issues as string[]) ?? [];
+  const setCheck = (c: string) => {
+    const base: Data = { label: d.label, check: c };
+    if (c === "site_issue") Object.assign(base, { issues: [], match: "any" });
+    if (c === "metric") Object.assign(base, { metric: "keyword_volume_max", op: "lt", value: 1000 });
+    if (c === "field") Object.assign(base, { field: "", op: "equals", value: "" });
+    onChange(base);
+  };
+  const research = ["researched", "site_issue", "metric"].includes(check);
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const issues = (cat?.issues ?? []).filter((i) => !words.length || words.every((w) => `${i.title} ${i.code} ${i.category}`.toLowerCase().includes(w)))
+    .sort((a, b) => Number(picked.includes(b.code)) - Number(picked.includes(a.code)));
+  const sev = { high: "b-red", medium: "b-amber", low: "b-gray" } as const;
+  const fieldOptions = [...(vars?.standard ?? []), ...(vars?.custom ?? []), ...(vars?.research ?? [])];
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Field label="Branch on…">
+        <select className="select" value={check} onChange={(e) => setCheck(e.target.value)}>
+          <optgroup label="Engagement (this campaign)">
+            <option value="opened">Opened an email</option>
+            <option value="clicked">Clicked a link or button</option>
+            <option value="replied">Replied</option>
+          </optgroup>
+          <optgroup label="Website research">
+            <option value="site_issue">Website has an issue (e.g. multiple H1s)</option>
+            <option value="metric">Research number (keyword volume, bids, site score…)</option>
+            <option value="researched">Website has been researched</option>
+          </optgroup>
+          <optgroup label="Lead data">
+            <option value="field">A lead field (CSV, Apollo or research)</option>
+          </optgroup>
+        </select>
+      </Field>
+
+      {check === "site_issue" && (
+        <div className="field">
+          <span>Issues {picked.length > 1 && (
+            <select className="select" style={{ display: "inline-block", width: "auto", height: 28, padding: "0 28px 0 8px", marginLeft: 6, fontSize: 12 }} value={(d.match as string) ?? "any"} onChange={(e) => onChange({ ...d, match: e.target.value })}>
+              <option value="any">any of these</option><option value="all">all of these</option>
+            </select>
+          )}</span>
+          <input className="input" type="search" placeholder="Search issues…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search issues" />
+          <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto pr-1">
+            {!cat && <Skeleton h={80} />}
+            {issues.map((i) => (
+              <label key={i.code} className="check tile" style={{ padding: "7px 10px" }}>
+                <input type="checkbox" checked={picked.includes(i.code)} onChange={(e) => onChange({ ...d, issues: e.target.checked ? [...picked, i.code] : picked.filter((x) => x !== i.code) })} />
+                <span className="min-w-0 flex-1"><span className="block truncate-1 text-[12.5px]">{i.title}</span><small className="text-muted">{i.category}</small></span>
+                <span className={`badge ${sev[i.severity]}`}>{i.severity}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {check === "metric" && (
+        <>
+          <Field label="Metric">
+            <select className="select" value={(d.metric as string) ?? ""} onChange={(e) => onChange({ ...d, metric: e.target.value })}>
+              {(cat?.metrics ?? []).map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Is">
+              <select className="select" value={(d.op as string) ?? "lt"} onChange={(e) => onChange({ ...d, op: e.target.value })}>
+                <option value="lt">less than</option><option value="lte">at most</option><option value="gt">greater than</option>
+                <option value="gte">at least</option><option value="eq">exactly</option>
+              </select>
+            </Field>
+            <Field label="Value"><input className="input" type="number" value={(d.value as number | string) ?? ""} onChange={(e) => onChange({ ...d, value: e.target.value === "" ? "" : +e.target.value })} /></Field>
+          </div>
+        </>
+      )}
+
+      {check === "field" && (
+        <>
+          <Field label="Field" hint="Type any CSV column name, or pick one.">
+            <input className="input" list="cond-fields" value={(d.field as string) ?? ""} onChange={(e) => onChange({ ...d, field: e.target.value })} placeholder="e.g. Industry" />
+            <datalist id="cond-fields">{fieldOptions.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}</datalist>
+          </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Condition">
+              <select className="select" value={(d.op as string) ?? "equals"} onChange={(e) => onChange({ ...d, op: e.target.value })}>
+                {FIELD_OPS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </Field>
+            {!["empty", "not_empty"].includes(d.op as string) && <Field label="Value"><input className="input" value={(d.value as string) ?? ""} onChange={(e) => onChange({ ...d, value: e.target.value })} /></Field>}
+          </div>
+        </>
+      )}
+
+      <small className="text-[11.5px] text-muted">
+        {research
+          ? <>Uses the lead&apos;s <Link href="/leads/research" className="text-pink">website research</Link>. Leads that haven&apos;t been researched (or have no data for this number) take the <b className="text-red">No</b> branch — add a &ldquo;Website has been researched&rdquo; check first to route them separately.</>
+          : check === "field" ? "Text comparisons ignore upper/lower case. Number comparisons ignore thousands separators (74,000)." : "Checked against every email sent to this lead in the campaign so far."}
+      </small>
+    </div>
+  );
+}
+
 function Inspector({ node, onChange, onDelete, templates }: { node: Node | null; onChange: (d: Data) => void; onDelete: () => void; templates: Template[] }) {
   if (!node) return <p className="text-[13px] text-muted">Select a node to edit it. Drag from a node&apos;s right handle to connect steps. Press Delete to remove a selected node or edge.</p>;
   const d = node.data as Data;
@@ -166,15 +308,7 @@ function Inspector({ node, onChange, onDelete, templates }: { node: Node | null;
           <small className="text-[11.5px] text-muted">Working days are set per campaign (default Mon–Fri) in the campaign&apos;s time zone.</small>
         </>
       )}
-      {kind === "condition" && (
-        <Field label="Branch when the lead has…" hint="Checked against every email sent to this lead in the campaign so far.">
-          <select className="select" value={(d.check as string) ?? "opened"} onChange={(e) => onChange({ ...d, check: e.target.value })}>
-            <option value="opened">Opened an email</option>
-            <option value="clicked">Clicked a link or button</option>
-            <option value="replied">Replied</option>
-          </select>
-        </Field>
-      )}
+      {kind === "condition" && <ConditionForm key={node.id} d={d} onChange={onChange} />}
     </div>
   );
 }
@@ -312,7 +446,7 @@ function VariablesCard({ nodes, templates }: { nodes: Node[]; templates: Templat
               <li key={v.key} className="tile" style={{ padding: "8px 10px" }} data-var={v.name}>
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="badge b-pink flex-none">{`{{${v.name}}}`}</span>
-                  <span className="text-[12px] text-txt-2 truncate-1 min-w-0 flex-1" title={v.columns.join(" + ")}>→ {v.columns.join(" + ")}</span>
+                  <span className="text-[12px] text-txt-2 truncate-1 min-w-0 flex-1" title={v.columns.join(" + ")}>{v.kind === "research" ? "← filled by Research leads" : `→ ${v.columns.join(" + ")}`}</span>
                   {v.alwaysFallback
                     ? <span className="badge b-gray" title="Every use has a fallback, so leads without it still read fine">optional</span>
                     : <span className="badge b-amber" title="At least one use has no fallback — leads without this value get a blank there">needed</span>}

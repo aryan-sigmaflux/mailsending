@@ -4,10 +4,54 @@ Node types
   start      – entry point (exactly one)
   send       – data: {template_ids: [...], same_thread: bool}; random even pick per lead
   wait       – data: {days, hours, minutes, working_days_only}
-  condition  – data: {check: opened|clicked|replied, within_days?}; outgoing edges use sourceHandle "yes"/"no"
+  condition  – outgoing edges use sourceHandle "yes"/"no". data.check is one of
+                 opened | clicked | replied            engagement with earlier emails in this campaign
+                 researched                            the lead's website research has finished
+                 site_issue  {issues: [code], match: any|all}   website audit found these issues
+                 metric      {metric, op: lt|lte|gt|gte|eq|neq, value}   research number (score, keyword volume, bids…)
+                 field       {field, op: equals|not_equals|contains|empty|not_empty|lt|lte|gt|gte, value}  any lead value
+               Leads without finished research take "No" on research checks.
 """
 
 NODE_TYPES = {"start", "send", "wait", "condition"}
+ENGAGEMENT_CHECKS = {"opened", "clicked", "replied"}
+RESEARCH_CHECKS = {"researched", "site_issue", "metric"}
+CONDITION_CHECKS = ENGAGEMENT_CHECKS | RESEARCH_CHECKS | {"field"}
+NUMERIC_OPS = {"lt", "lte", "gt", "gte", "eq", "neq"}
+FIELD_OPS = {"equals", "not_equals", "contains", "empty", "not_empty", "lt", "lte", "gt", "gte"}
+
+
+def condition_errors(label: str, d: dict) -> list[str]:
+    from app.services.research import METRICS
+    from app.services.site_audit import ISSUES
+
+    check = d.get("check")
+    if check not in CONDITION_CHECKS:
+        return [f"'{label}' has an unknown check '{check}'"]
+    if check == "site_issue":
+        codes = d.get("issues") or []
+        if not codes:
+            return [f"'{label}' — pick at least one website issue"]
+        bad = [c for c in codes if c not in ISSUES]
+        if bad:
+            return [f"'{label}' checks unknown website issue(s): {', '.join(bad)}"]
+    if check == "metric":
+        if d.get("metric") not in METRICS:
+            return [f"'{label}' — pick a research metric to compare"]
+        if d.get("op") not in NUMERIC_OPS:
+            return [f"'{label}' — pick a comparison (less than, greater than…)"]
+        try:
+            float(d.get("value"))
+        except (TypeError, ValueError):
+            return [f"'{label}' — enter a number to compare against"]
+    if check == "field":
+        if not str(d.get("field") or "").strip():
+            return [f"'{label}' — pick the lead field to check"]
+        if d.get("op") not in FIELD_OPS:
+            return [f"'{label}' — pick how to compare the field"]
+        if d.get("op") in ("equals", "not_equals", "contains", "lt", "lte", "gt", "gte") and str(d.get("value") or "") == "":
+            return [f"'{label}' — enter a value to compare the field with"]
+    return []
 
 
 def nodes_by_id(graph: dict) -> dict[str, dict]:
@@ -50,8 +94,8 @@ def validate(graph: dict, template_ids: set[str] | None = None) -> list[str]:
             total = int(d.get("days") or 0) * 1440 + int(d.get("hours") or 0) * 60 + int(d.get("minutes") or 0)
             if total <= 0:
                 errors.append(f"'{label}' wait must be longer than 0 minutes")
-        if t == "condition" and d.get("check") not in ("opened", "clicked", "replied"):
-            errors.append(f"'{label}' must check opened, clicked or replied")
+        if t == "condition":
+            errors.extend(condition_errors(label, d))
     for e in graph.get("edges", []):
         if e.get("source") not in by_id or e.get("target") not in by_id:
             errors.append("An edge points to a missing node")

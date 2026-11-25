@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     ENGINE_TICK_SECONDS: int = 20
     REPLY_POLL_SECONDS: int = 120
     ENGINE_BATCH_SIZE: int = 50
+    RESEARCH_TICK_SECONDS: int = 5
 
     @cached_property
     def cors_origins(self) -> list[str]:

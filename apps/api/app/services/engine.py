@@ -21,10 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import async_session
-from app.models import Campaign, CampaignContact, Contact, Mailbox, Message, Suppression, Template, User
+from app.models import Campaign, CampaignContact, Contact, Mailbox, Message, SiteResearch, Suppression, Template, User
 from app.models.campaign import LIVE_STATES
 from app.services import graph as g
-from app.services import limits, renderer, transport
+from app.services import limits, renderer, research, transport
 from app.services.schedule import add_wait, in_window, is_instant, next_window_start
 
 log = logging.getLogger("engine")
@@ -197,7 +197,21 @@ async def advance(ctx: Ctx, cc: CampaignContact) -> None:
 
 
 async def _condition_met(ctx: Ctx, cc: CampaignContact, data: dict) -> bool:
-    col = {"opened": Message.opened_at, "clicked": Message.clicked_at, "replied": Message.replied_at}[data.get("check", "opened")]
+    check = data.get("check", "opened")
+    if check in g.RESEARCH_CHECKS or check == "field":
+        contact = await ctx.db.get(Contact, cc.contact_id)
+        if not contact:
+            return False
+        if check == "field":
+            return research.field_condition(renderer.contact_context(contact), data)
+        r = None
+        if contact.research_domain:
+            r = (await ctx.db.execute(select(SiteResearch).where(
+                SiteResearch.user_id == ctx.user.id, SiteResearch.domain == contact.research_domain))).scalar_one_or_none()
+        return research.research_condition(r, data)
+    col = {"opened": Message.opened_at, "clicked": Message.clicked_at, "replied": Message.replied_at}.get(check)
+    if col is None:
+        return False
     q = select(func.count()).select_from(Message).where(Message.campaign_contact_id == cc.id, col.is_not(None))
     return (await ctx.db.execute(q)).scalar_one() > 0
 

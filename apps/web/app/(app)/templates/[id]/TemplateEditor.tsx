@@ -11,7 +11,8 @@ import { Field, Modal, Skeleton, Spinner, Toggle } from "@/components/ui";
 import { get, post, put } from "@/lib/api";
 import type { Contact, Integration, Paged, Template } from "@/lib/types";
 
-interface Vars { standard: { key: string; label: string }[]; custom: { key: string; label: string }[]; system: { key: string; label: string }[] }
+type Var = { key: string; label: string };
+interface Vars { standard: Var[]; custom: Var[]; research?: Var[]; system: Var[] }
 interface Preview { subject: string; html: string; contact: string | null; variables: string[]; missing: string[] }
 
 export default function TemplateEditor() {
@@ -79,7 +80,7 @@ function Editor({ initial }: { initial: Template }) {
     setVarOpen(false);
   }
 
-  const allVars = [...(vars.data?.standard ?? []), ...(vars.data?.custom ?? []), ...(vars.data?.system ?? [])];
+  const allVars = [...(vars.data?.standard ?? []), ...(vars.data?.custom ?? []), ...(vars.data?.research ?? []), ...(vars.data?.system ?? [])];
 
   return (
     <>
@@ -148,10 +149,10 @@ function Editor({ initial }: { initial: Template }) {
       </div>
 
       <Modal open={varOpen} onClose={() => setVarOpen(false)} title="Insert variable">
-        {(["standard", "custom", "system"] as const).map((g) => vars.data?.[g].length ? (
+        {(["standard", "custom", "research", "system"] as const).map((g) => vars.data?.[g]?.length ? (
           <div key={g} className="mb-4">
-            <div className="nav-label" style={{ padding: "0 0 8px" }}>{g === "standard" ? "Lead fields" : g === "custom" ? "From your CSVs / Apollo" : "System"}</div>
-            <div className="flex flex-wrap gap-1.5">{vars.data[g].map((v) => <button key={v.key} className="chip" onClick={() => insertVar(v.key)}><span>{v.label}</span></button>)}</div>
+            <div className="nav-label" style={{ padding: "0 0 8px" }}>{g === "standard" ? "Lead fields" : g === "custom" ? "From your CSVs / Apollo" : g === "research" ? "From Research leads (website audit + keywords)" : "System"}</div>
+            <div className="flex flex-wrap gap-1.5">{vars.data[g]!.map((v) => <button key={v.key} className="chip" onClick={() => insertVar(v.key)} title={`{{${v.key}}}`}><span>{v.label}</span></button>)}</div>
           </div>
         ) : null)}
       </Modal>

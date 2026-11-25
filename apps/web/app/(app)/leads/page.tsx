@@ -1,13 +1,14 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileUp, MailCheck, Plus, Search, Trash, Upload, Users } from "lucide-react";
-import { useState } from "react";
+import { FileUp, MailCheck, Plus, ScanSearch, Search, Trash, Upload, Users } from "lucide-react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import { toast } from "@/components/toast";
 import { Empty, Field, Modal, PageHeader, Skeleton, Spinner, VerifyBadge, confirmAction } from "@/components/ui";
 import { BASE_URL, del, get, post, tokens } from "@/lib/api";
 import { num } from "@/lib/format";
-import type { Contact, ContactList, Paged } from "@/lib/types";
+import type { Contact, ContactList, Paged, ResearchSummary } from "@/lib/types";
 
 const TARGETS = [
   ["email", "Email"], ["first_name", "First name"], ["last_name", "Last name"], ["company", "Company"], ["title", "Job title"],
@@ -120,6 +121,11 @@ export default function LeadsPage() {
     enabled: !!active,
   });
   const current = lists.data?.find((l) => l.id === active) ?? null;
+  const domains = useMemo(() => [...new Set((contacts.data?.items ?? []).map((c) => c.research_domain).filter(Boolean) as string[])].sort(), [contacts.data]);
+  const research = useQuery({
+    queryKey: ["research-sum", domains.join(",")], enabled: domains.length > 0,
+    queryFn: () => get<Record<string, ResearchSummary>>(`/research/by-domain?domains=${encodeURIComponent(domains.join(","))}`),
+  });
 
   const create = useMutation({ mutationFn: () => post<ContactList>("/lists", { name: listName }), onSuccess: (l) => { setNewList(false); setListName(""); setActive(l.id); qc.invalidateQueries({ queryKey: ["lists"] }); setImporting(l); }, onError: toast.err });
   const removeList = useMutation({ mutationFn: (id: string) => del(`/lists/${id}`), onSuccess: () => { setActive(null); qc.invalidateQueries({ queryKey: ["lists"] }); }, onError: toast.err });
@@ -160,6 +166,7 @@ export default function LeadsPage() {
                 <div className="ask" style={{ height: 38, width: 240 }}><Search /><input placeholder="Search contacts" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} /></div>
                 <button className="btn btn-sm btn-ghost" onClick={() => setImporting(current)}><Upload /> Import CSV</button>
                 <button className="btn btn-sm btn-ghost" onClick={() => verify.mutate(current.id)} disabled={verify.isPending}><MailCheck /> Verify list</button>
+                <Link className="btn btn-sm btn-ghost" href="/leads/research"><ScanSearch /> Research</Link>
                 <a className="btn btn-sm btn-dark" href="#" onClick={async (e) => {
                   e.preventDefault();
                   const res = await fetch(`${BASE_URL}/contacts?list_id=${current.id}&size=500`, { headers: { Authorization: `Bearer ${tokens.access()}` } });
@@ -175,7 +182,7 @@ export default function LeadsPage() {
                   <Empty icon={<FileUp />} title={q ? "No matches" : "This list is empty"} action={!q && <button className="btn btn-primary" onClick={() => setImporting(current)}><Upload /> Import CSV</button>} />
                 ) : (
                   <table className="table">
-                    <thead><tr><th>Email</th><th>Name</th><th>Company</th><th>Title</th><th>Status</th>{current.columns.slice(0, 3).map((c) => <th key={c}>{c}</th>)}<th /></tr></thead>
+                    <thead><tr><th>Email</th><th>Name</th><th>Company</th><th>Title</th><th>Status</th><th title="Website research score">Website</th>{current.columns.slice(0, 3).map((c) => <th key={c}>{c}</th>)}<th /></tr></thead>
                     <tbody>
                       {contacts.data.items.map((c) => (
                         <tr key={c.id}>
@@ -184,6 +191,12 @@ export default function LeadsPage() {
                           <td className="truncate-1 max-w-[180px]">{c.company || <span className="text-faint">—</span>}</td>
                           <td className="truncate-1 max-w-[160px] text-txt-2">{c.title}</td>
                           <td><VerifyBadge status={c.verify_status} /></td>
+                          <td>{(() => {
+                            const r = c.research_domain ? research.data?.[c.research_domain] : undefined;
+                            if (!r) return <span className="text-faint">—</span>;
+                            if (r.status !== "done") return <span className="badge b-gray">{r.status === "running" ? "researching" : r.status}</span>;
+                            return <span className={`badge ${r.score == null ? "b-gray" : r.score >= 80 ? "b-green" : r.score >= 50 ? "b-amber" : "b-red"}`} title={`${r.issue_count} issues · ${r.domain}`}>{r.score}/100 · {r.issue_count} issues</span>;
+                          })()}</td>
                           {current.columns.slice(0, 3).map((k) => <td key={k} className="text-txt-2 truncate-1 max-w-[140px]">{c.fields[k] ?? ""}</td>)}
                           <td><button className="btn btn-icon btn-sm btn-dark" title="Delete contact" onClick={() => removeContact.mutate(c.id)}><Trash /></button></td>
                         </tr>

@@ -127,6 +127,7 @@ export interface Contact {
   verify_status: VerifyStatus;
   verify_reason: string;
   unsubscribed: boolean;
+  research_domain: string | null;
   created_at: string;
 }
 
@@ -200,7 +201,7 @@ export interface Campaign {
 
 export interface Integration {
   id: string;
-  kind: "ai" | "apollo";
+  kind: "ai" | "apollo" | "keywords" | "pagespeed";
   provider: string;
   mode: "api" | "mcp";
   label: string;
@@ -219,3 +220,64 @@ export interface Paged<T> {
 
 /** Which stage of a campaign a sent email belongs to (step = how many emails the lead had received by then). */
 export interface Stage { node_id: string | null; step: number | null; of: number | null; name: string | null; template?: string | null }
+
+export type ResearchStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+export type Severity = "high" | "medium" | "low";
+
+export interface SiteIssue { code: string; severity: Severity; category: string; title: string; detail: string }
+
+export interface KeywordRow {
+  keyword: string;
+  volume?: number | null;
+  competition?: "LOW" | "MEDIUM" | "HIGH" | null;
+  competition_index?: number | null;
+  low_bid?: number | null;
+  high_bid?: number | null;
+  cpc?: number | null;
+  currency?: string;
+  monthly?: (number | null)[];
+  /** Keyword Planner export: blank volume (too few searches) → volume 0 + no_data; ranged volume ("1K – 10K") → low end + volume_range */
+  no_data?: boolean;
+  volume_range?: string;
+  three_month_change?: string;
+  yoy_change?: string;
+  source?: string;
+}
+
+export type ResearchMetrics = Partial<Record<
+  "site_score" | "issue_count" | "high_issue_count" | "performance_score" | "keyword_volume_max" | "keyword_volume_total"
+  | "bid_high_max" | "bid_low_max" | "cpc_max" | "competition_index", number | null>>;
+
+/** Summary returned for a lead table (GET /research/by-domain). */
+export interface ResearchSummary {
+  id: string;
+  domain: string;
+  url: string;
+  status: ResearchStatus;
+  error: string | null;
+  score: number | null;
+  issue_count: number;
+  metrics: ResearchMetrics;
+  keywords: KeywordRow[];
+  summary: string;
+  researched_at: string | null;
+}
+
+export interface Research extends ResearchSummary {
+  final_url: string | null;
+  issues: SiteIssue[];
+  facts: Record<string, unknown> & { pagespeed?: { score: number | null; lcp_ms?: number | null; error?: string } };
+  keyword_source: "ai" | "heuristic" | "";
+  metrics_source: string;
+  metrics_error: string | null;
+  options: { pagespeed?: boolean; location_code?: number | null; language_code?: string };
+  started_at: string | null;
+}
+
+export interface ResearchCatalog {
+  issues: { code: string; severity: Severity; category: string; title: string }[];
+  metrics: { key: string; label: string; unit: string }[];
+  fields: { key: string; label: string }[];
+  default_location: number;
+  languages: string[];
+}

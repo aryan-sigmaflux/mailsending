@@ -1,6 +1,6 @@
 """Background worker: `python -m app.worker`
 
-Runs the campaign engine and the IMAP reply/bounce poller on fixed intervals. A Redis lock per job
+Runs the campaign engine, the IMAP reply/bounce poller and lead research (website audits) on fixed intervals. A Redis lock per job
 makes it safe to run several worker processes (only one executes each job at a time).
 """
 
@@ -11,9 +11,10 @@ import signal
 import redis.asyncio as aioredis
 
 from app.config import settings
-from app.services import engine
+from app.services import engine, research
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # research fetches dozens of URLs per site
 log = logging.getLogger("worker")
 
 
@@ -45,10 +46,12 @@ async def main() -> None:
         except NotImplementedError:  # Windows
             pass
     r = aioredis.from_url(settings.REDIS_URL)
-    log.info("worker started (engine every %ss, replies every %ss)", settings.ENGINE_TICK_SECONDS, settings.REPLY_POLL_SECONDS)
+    log.info("worker started (engine every %ss, replies every %ss, research every %ss)", settings.ENGINE_TICK_SECONDS,
+             settings.REPLY_POLL_SECONDS, settings.RESEARCH_TICK_SECONDS)
     await asyncio.gather(
         _every("engine", settings.ENGINE_TICK_SECONDS, engine.tick, r, stop),
         _every("replies", settings.REPLY_POLL_SECONDS, engine.poll_replies, r, stop),
+        _every("research", settings.RESEARCH_TICK_SECONDS, research.tick, r, stop),
     )
 
 

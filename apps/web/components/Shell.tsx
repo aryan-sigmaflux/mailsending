@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  Bell, FileText, Flame, Globe, Inbox, LayoutDashboard, LifeBuoy, LogOut, Mail, MailCheck, Send, Settings, ShieldCheck,
-  Sparkles, Users, Workflow,
+  Bell, FileText, Flame, Globe, Inbox, LayoutDashboard, LifeBuoy, LogOut, Mail, MailCheck, ScanSearch, Send, Settings,
+  ShieldCheck, Sparkles, Users, Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -28,6 +28,7 @@ const NAV: { label?: string; items: Item[] }[] = [
     label: "Leads",
     items: [
       { href: "/leads", label: "Lead lists", icon: <Users /> },
+      { href: "/leads/research", label: "Research leads", icon: <ScanSearch /> },
       { href: "/lead-finder", label: "Lead Finder", icon: <Sparkles />, feature: "apollo" },
       { href: "/verifier", label: "Email verifier", icon: <MailCheck /> },
     ],
@@ -68,7 +69,9 @@ export function Shell({ children }: { children: ReactNode }) {
   }
 
   const { user } = me;
-  const isOn = (href: string) => path === href || path.startsWith(href + "/");
+  const matches = (href: string) => path === href || path.startsWith(href + "/");
+  // The most specific item wins, so /leads/research highlights "Research leads", not "Lead lists" too.
+  const isOn = (href: string) => matches(href) && !NAV.some((g) => g.items.some((i) => i.href.length > href.length && i.href.startsWith(href) && matches(i.href)));
   const enabled = (i: Item) => !i.feature || user.role === "super_admin" || user.features?.[i.feature as keyof typeof user.features];
 
   return (

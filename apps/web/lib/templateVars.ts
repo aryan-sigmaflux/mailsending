@@ -7,6 +7,11 @@ const VAR_RE = /\{\{\s*([A-Za-z0-9_ .-]+?)\s*(?:\|\s*([^}]*?)\s*)?\}\}/g;
 export const normKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 const SYSTEM = new Set(["unsubscribeurl", "sendername", "senderemail"]);
+/** Filled by Research leads (API: services/research.py ENRICH_FIELDS) — not a CSV column. */
+export const RESEARCH_VARS = new Set([
+  "sitescore", "siteissuecount", "topissue", "siteissues", "sitesummary", "topkeyword", "topkeywordvolume", "topkeywordcpc",
+  "keywordstotalvolume", "keyword1", "keyword2", "keyword3", "keyword4", "keyword5", "pagespeedscore",
+]);
 const STANDARD = ["email", "first_name", "last_name", "company", "title", "phone", "website", "linkedin_url", "city", "country"];
 const ALIASES: Record<string, string> = {
   name: "first_name", firstname: "first_name", first: "first_name", lastname: "last_name", last: "last_name", surname: "last_name",
@@ -14,7 +19,7 @@ const ALIASES: Record<string, string> = {
   jobtitle: "title", position: "title", designation: "title", linkedin: "linkedin_url", site: "website", url: "website", location: "city",
 };
 
-export type VarKind = "standard" | "custom" | "system";
+export type VarKind = "standard" | "custom" | "system" | "research";
 export interface VarUse { template: string; step: string }
 export interface SequenceVar {
   key: string;            // normalized
@@ -30,6 +35,7 @@ export interface SequenceVar {
 export function columnsFor(name: string): { kind: VarKind; columns: string[] } {
   const k = normKey(name);
   if (SYSTEM.has(k)) return { kind: "system", columns: [] };
+  if (RESEARCH_VARS.has(k)) return { kind: "research", columns: [] };
   const std = STANDARD.find((f) => normKey(f) === k) ?? ALIASES[k];
   if (std === "full_name") return { kind: "standard", columns: ["first_name", "last_name"] };
   if (std) return { kind: "standard", columns: [std] };

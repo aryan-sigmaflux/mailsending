@@ -11,11 +11,12 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.deps import DB, CurrentUser, get_owned
-from app.models import Contact, ContactList, Suppression, list_contacts
+from app.models import Contact, ContactList, SiteResearch, Suppression, list_contacts
 from app.models.contact import STANDARD_FIELDS
 from app.schemas import ORM
 from app.services import limits
 from app.services.renderer import ALIASES, norm_key
+from app.services.research import ENRICH_FIELDS
 
 router = APIRouter(tags=["contacts"])
 
@@ -59,6 +60,7 @@ class ContactOut(ORM):
     verify_status: str
     verify_reason: str
     unsubscribed: bool
+    research_domain: str | None = None
     created_at: datetime
 
 
@@ -226,8 +228,16 @@ async def get_contacts(
     user: CurrentUser, db: DB,
     list_id: uuid.UUID | None = None, q: str = "", status_filter: str = Query("", alias="status"),
     page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=500),
+    research: str = Query("", pattern="^(|none|done|pending|failed)$", description="Filter by website research state"),
 ):
     stmt = select(Contact).where(Contact.user_id == user.id)
+    if research:
+        has = select(SiteResearch.id).where(SiteResearch.user_id == user.id, SiteResearch.domain == Contact.research_domain)
+        if research == "none":
+            stmt = stmt.where(~has.where(SiteResearch.status.in_(("done", "queued", "running"))).exists())
+        else:
+            states = {"done": ("done",), "pending": ("queued", "running"), "failed": ("failed", "cancelled")}[research]
+            stmt = stmt.where(has.where(SiteResearch.status.in_(states)).exists())
     if list_id:
         stmt = stmt.join(list_contacts, list_contacts.c.contact_id == Contact.id).where(list_contacts.c.list_id == list_id)
     if q:
@@ -282,7 +292,10 @@ async def variables(user: CurrentUser, db: DB):
         {"key": "LinkedinUrl", "label": "LinkedIn URL"}, {"key": "Phone", "label": "Phone"},
     ]
     system = [{"key": "sender_name", "label": "Sender name"}, {"key": "unsubscribe_url", "label": "Unsubscribe link"}]
-    return {"standard": standard, "custom": [{"key": c, "label": c} for c in sorted(custom)], "system": system}
+    research_vars = [{"key": "".join(w.capitalize() for w in k.split("_")), "label": label} for k, label in ENRICH_FIELDS]
+    custom -= {k for k, _ in ENRICH_FIELDS}
+    return {"standard": standard, "custom": [{"key": c, "label": c} for c in sorted(custom)], "research": research_vars,
+            "system": system}
 
 
 # ── Suppression list ───────────────────────────────────────────

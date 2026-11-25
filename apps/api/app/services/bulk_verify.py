@@ -30,7 +30,7 @@ from app.services.verifier import verify_email
 log = logging.getLogger(__name__)
 
 CONCURRENCY = 5
-TTL_SECONDS = 30 * 24 * 3600  # finished / abandoned jobs disappear after 30 days
+DONE_TTL_SECONDS = 30 * 24 * 3600  # finished jobs disappear after 30 days; stopped ones are kept until Start/Discard
 PARTS = ("queue", "inflight", "seen", "meta")
 
 _redis: aioredis.Redis | None = None
@@ -58,10 +58,15 @@ def _lock(uid: uuid.UUID) -> asyncio.Lock:
     return _locks.setdefault(uid, asyncio.Lock())
 
 
-async def _expire(uid: uuid.UUID) -> None:
+async def _set_ttl(uid: uuid.UUID) -> None:
+    """Only finished jobs expire. A stopped job must still be there however long it takes to press Start."""
+    done = await _state(uid) == "done"
     p = redis().pipeline(transaction=False)
     for part in PARTS:
-        p.expire(_k(uid, part), TTL_SECONDS)
+        if done:
+            p.expire(_k(uid, part), DONE_TTL_SECONDS)
+        else:
+            p.persist(_k(uid, part))
     await p.execute()
 
 
@@ -181,7 +186,7 @@ async def _run(uid: uuid.UUID) -> None:
                     relaunch = True  # emails were added just as the workers ran out of work
                 elif state == "running":
                     await redis().hset(_k(uid, "meta"), "state", "paused")
-                await _expire(uid)
+                await _set_ttl(uid)
         except Exception:  # noqa: BLE001
             log.exception("could not settle bulk job state")
         _stopping.discard(uid)
@@ -203,6 +208,7 @@ async def _start_locked(uid: uuid.UUID) -> None:
     meta = _k(uid, "meta")
     if not await redis().llen(_k(uid, "queue")):
         await redis().hset(meta, "state", "done")
+        await _set_ttl(uid)
         return
     await redis().hset(meta, "state", "running")
     await redis().hsetnx(meta, "started_at", _now())
@@ -248,7 +254,7 @@ async def enqueue(uid: uuid.UUID, emails: list[str], credits: int) -> tuple[int,
             p.hincrby(_k(uid, "meta"), "total", len(queued))
             p.hsetnx(_k(uid, "meta"), "state", "paused")
             await p.execute()
-            await _expire(uid)
+            await _set_ttl(uid)
             if await _state(uid) != "running" or uid not in _tasks:
                 await _start_locked(uid)
         return len(queued), len(fresh) - len(queued)
@@ -290,13 +296,17 @@ async def remaining(uid: uuid.UUID) -> int:
 
 
 async def resume_running() -> None:
-    """On API startup: carry on with every job that was running when the API last went down."""
+    """On API startup: carry on with every job that was running when the API last went down, and make sure
+    stopped jobs don't carry an expiry (older versions set one)."""
     try:
         async for key in redis().scan_iter(match="sfmail:verify:*:meta", count=200):
-            if await redis().hget(key, "state") == "running":
-                uid = uuid.UUID(key.split(":")[2])
+            uid = uuid.UUID(key.split(":")[2])
+            state = await redis().hget(key, "state")
+            if state == "running":
                 log.info("resuming bulk verification for user %s", uid)
                 await start(uid)
+            else:
+                await _set_ttl(uid)
     except Exception:  # noqa: BLE001 — never block startup on this
         log.exception("could not resume bulk verifications")
 
