@@ -29,9 +29,9 @@ class SiteResearch(IdMixin, TimestampMixin, Base):
     # raw findings: title, meta_description, h1s, load_ms, pagespeed, broken_links, …
     facts: Mapped[dict] = mapped_column(JSONB, default=dict)
     summary: Mapped[str] = mapped_column(Text, default="")  # what the business sells (AI)
-    # [{keyword, volume, competition, competition_index, low_bid, high_bid, cpc, currency, monthly}]
+    # [{keyword, set: smart|basic, volume, competition, competition_index, low_bid, high_bid, cpc, currency, monthly}]
     keywords: Mapped[list] = mapped_column(JSONB, default=list)
-    keyword_source: Mapped[str] = mapped_column(String(20), default="")  # ai | heuristic
+    keyword_source: Mapped[str] = mapped_column(String(20), default="")  # "ai+heuristic" | "heuristic" | "ai" (older rows)
     metrics_source: Mapped[str] = mapped_column(String(20), default="")  # google_ads | dataforseo | ""
     metrics_error: Mapped[str | None] = mapped_column(Text)
     # Numbers sequence conditions branch on — see app.services.research.METRICS.

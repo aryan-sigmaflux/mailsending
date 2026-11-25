@@ -34,8 +34,10 @@ METRICS: dict[str, tuple[str, str]] = {
     "issue_count": ("Number of website issues", ""),
     "high_issue_count": ("Number of high-severity issues", ""),
     "performance_score": ("Mobile PageSpeed score (0–100)", ""),
-    "keyword_volume_max": ("Top keyword monthly searches", "searches/mo"),
-    "keyword_volume_total": ("All 5 keywords: total monthly searches", "searches/mo"),
+    "keyword_volume_max": ("Top keyword monthly searches (smart + basic)", "searches/mo"),
+    "keyword_volume_total": ("All keywords: total monthly searches", "searches/mo"),
+    "smart_volume_max": ("Top smart (AI) keyword monthly searches", "searches/mo"),
+    "smart_volume_total": ("Smart (AI) keywords: total monthly searches", "searches/mo"),
     "bid_high_max": ("Highest top-of-page bid (high range)", "currency"),
     "bid_low_max": ("Highest top-of-page bid (low range)", "currency"),
     "cpc_max": ("Highest average CPC", "currency"),
@@ -48,10 +50,30 @@ ENRICH_FIELDS = [
     ("top_issue", "Most serious website issue"), ("site_issues", "All website issues (comma separated)"),
     ("site_summary", "What the business sells (AI)"), ("top_keyword", "Highest-volume keyword"),
     ("top_keyword_volume", "Top keyword monthly searches"), ("top_keyword_cpc", "Top keyword top-of-page bid"),
-    ("keywords_total_volume", "Total monthly searches of the 5 keywords"),
-    *[(f"keyword_{i}", f"Keyword {i}") for i in range(1, KEYWORD_COUNT + 1)],
+    ("keywords_total_volume", "Total monthly searches of all keywords"),
+    *[(f"smart_keyword_{i}", f"Smart keyword {i} (AI)") for i in range(1, KEYWORD_COUNT + 1)],
+    *[(f"keyword_{i}", f"Keyword {i} (from page headings)") for i in range(1, KEYWORD_COUNT + 1)],
     ("pagespeed_score", "Mobile PageSpeed score"),
 ]
+
+# Every keyword row has "set": "smart" (AI reads the website) or "basic" (phrases from the page's title/headings).
+# Smart keywords are skipped when the user has no AI provider; basic ones are always there.
+
+
+def kw_set(r: SiteResearch, k: dict) -> str:
+    """Rows saved before keyword sets existed: the old single list was AI-made when keyword_source was "ai"."""
+    return k.get("set") or ("smart" if r.keyword_source == "ai" else "basic")
+
+
+def _unique(rows: list[dict]) -> list[dict]:
+    """The same keyword can be in both sets; count it once."""
+    seen, out = set(), []
+    for k in rows:
+        key = (k.get("keyword") or "").strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(k)
+    return out
 
 
 def utcnow() -> datetime:
@@ -61,10 +83,14 @@ def utcnow() -> datetime:
 # ── Derived data ─────────────────────────────────────────────────────────────
 
 def compute_metrics(score: int | None, issues: list[dict], facts: dict, keywords: list[dict]) -> dict:
+    keywords = _unique(keywords)
     vols = [k["volume"] for k in keywords if k.get("volume") is not None]
+    smart = [k["volume"] for k in keywords if k.get("set") == "smart" and k.get("volume") is not None]
     top = max((k for k in keywords if k.get("volume") is not None), key=lambda k: k["volume"], default=None)
     mx = lambda key: max((k[key] for k in keywords if k.get(key) is not None), default=None)  # noqa: E731
     return {
+        "smart_volume_max": max(smart) if smart else None,
+        "smart_volume_total": sum(smart) if smart else None,
         "site_score": score,
         "issue_count": len(issues),
         "high_issue_count": sum(1 for i in issues if i["severity"] == "high"),
@@ -100,8 +126,11 @@ def enrich_values(r: SiteResearch) -> dict[str, str]:
         "keywords_total_volume": _fmt(m.get("keyword_volume_total")),
         "pagespeed_score": _fmt(m.get("performance_score")),
     }
+    smart = [k["keyword"] for k in kws if kw_set(r, k) == "smart"]
+    basic = [k["keyword"] for k in kws if kw_set(r, k) == "basic"]
     for i in range(KEYWORD_COUNT):
-        vals[f"keyword_{i + 1}"] = kws[i]["keyword"] if i < len(kws) else ""
+        vals[f"smart_keyword_{i + 1}"] = smart[i] if i < len(smart) else ""
+        vals[f"keyword_{i + 1}"] = basic[i] if i < len(basic) else ""
     return vals
 
 
@@ -203,7 +232,7 @@ async def apply_planner_export(db, user_id: uuid.UUID, parsed: dict, list_id: uu
         for k in r.keywords or []:
             hit = planner.get(kp.norm(k.get("keyword", "")))
             if hit:
-                k = {"keyword": k["keyword"], **hit, "source": "keyword_planner_csv"}
+                k = {"keyword": k["keyword"], "set": kw_set(r, k), **hit, "source": "keyword_planner_csv"}
                 matched_norms.add(kp.norm(k["keyword"]))
                 changed = True
             elif k.get("keyword"):
@@ -255,32 +284,35 @@ async def process(rid: uuid.UUID) -> None:
         return
 
     facts = res["facts"]
-    summary, kw_list, kw_source, metrics_source, metrics_error = "", [], "", "", None
+    summary, smart, basic, metrics_source, metrics_error = "", [], [], "", None
     if res["text"] or facts.get("title"):
+        # Smart keywords: the AI reads the website. Skipped when the user has no AI provider.
         if ai_cfg:
             try:
-                summary, kw_list = await kw.ai_keywords(ai_cfg, domain, facts, res["text"], res["extra_texts"], KEYWORD_COUNT)
-                kw_source = "ai"
-            except Exception as e:  # noqa: BLE001 — fall back to the heuristic below
+                summary, smart = await kw.ai_keywords(ai_cfg, domain, facts, res["text"], res["extra_texts"], KEYWORD_COUNT)
+            except Exception as e:  # noqa: BLE001 — basic keywords still get made
                 log.warning("AI keywords for %s failed: %s", domain, e)
-                metrics_error = f"AI keyword extraction failed ({type(e).__name__}: {str(e)[:150]}) — used page headings instead"
-        if not kw_list:
-            kw_list = kw.heuristic_keywords(facts.get("title") or "", facts.get("headings") or [], facts.get("meta_description") or "",
-                                            res["text"], domain.split(".")[0], KEYWORD_COUNT)
-            kw_source = "heuristic" if kw_list else ""
+                facts["smart_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        else:
+            facts["smart_error"] = "no_ai"
+        # Basic keywords: phrases from the page title / headings — always.
+        basic = kw.heuristic_keywords(facts.get("title") or "", facts.get("headings") or [], facts.get("meta_description") or "",
+                                      res["text"], domain.split(".")[0], KEYWORD_COUNT)
+    kw_source = "+".join(s for s, lst in (("ai", smart), ("heuristic", basic)) if lst)
+    kw_list = list(dict.fromkeys([*smart, *basic]))  # one lookup per distinct keyword
 
-    rows = [{"keyword": k} for k in kw_list]
+    rows = [{"keyword": k, "set": "smart"} for k in smart] + [{"keyword": k, "set": "basic"} for k in basic]
     if kw_list and kw_cfg:
         provider, cfg, secret = kw_cfg
         try:
-            rows = await kw.metrics(provider, cfg, secret, kw_list, opts.get("location_code") or cfg.get("location_code") or kw.DEFAULT_LOCATION,
-                                    opts.get("language_code") or cfg.get("language_code") or kw.DEFAULT_LANGUAGE)
+            found = await kw.metrics(provider, cfg, secret, kw_list, opts.get("location_code") or cfg.get("location_code") or kw.DEFAULT_LOCATION,
+                                     opts.get("language_code") or cfg.get("language_code") or kw.DEFAULT_LANGUAGE)
+            by_kw = {m["keyword"].lower(): m for m in found}
+            rows = [{**by_kw.get(r_["keyword"].lower(), {}), **r_} for r_ in rows]
             metrics_source = provider
         except Exception as e:  # noqa: BLE001
             log.warning("keyword metrics for %s failed: %s", domain, e)
             metrics_error = f"{type(e).__name__}: {str(e)[:300]}"
-    elif kw_list:
-        metrics_error = metrics_error or "No keyword data source connected (Settings → Keyword data) — volumes and bids are empty"
 
     async with async_session() as db:
         r = await db.get(SiteResearch, rid)

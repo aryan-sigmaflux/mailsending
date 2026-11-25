@@ -228,6 +228,8 @@ export interface SiteIssue { code: string; severity: Severity; category: string;
 
 export interface KeywordRow {
   keyword: string;
+  /** smart = picked by AI from the website; basic = phrases from the page title/headings */
+  set?: "smart" | "basic";
   volume?: number | null;
   competition?: "LOW" | "MEDIUM" | "HIGH" | null;
   competition_index?: number | null;
@@ -266,8 +268,9 @@ export interface ResearchSummary {
 export interface Research extends ResearchSummary {
   final_url: string | null;
   issues: SiteIssue[];
-  facts: Record<string, unknown> & { pagespeed?: { score: number | null; lcp_ms?: number | null; error?: string } };
-  keyword_source: "ai" | "heuristic" | "";
+  /** smart_error: "no_ai" when the user has no AI provider, else the AI error message */
+  facts: Record<string, unknown> & { pagespeed?: { score: number | null; lcp_ms?: number | null; error?: string }; smart_error?: string };
+  keyword_source: string;
   metrics_source: string;
   metrics_error: string | null;
   options: { pagespeed?: boolean; location_code?: number | null; language_code?: string };

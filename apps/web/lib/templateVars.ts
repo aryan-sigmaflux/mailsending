@@ -11,6 +11,7 @@ const SYSTEM = new Set(["unsubscribeurl", "sendername", "senderemail"]);
 export const RESEARCH_VARS = new Set([
   "sitescore", "siteissuecount", "topissue", "siteissues", "sitesummary", "topkeyword", "topkeywordvolume", "topkeywordcpc",
   "keywordstotalvolume", "keyword1", "keyword2", "keyword3", "keyword4", "keyword5", "pagespeedscore",
+  "smartkeyword1", "smartkeyword2", "smartkeyword3", "smartkeyword4", "smartkeyword5",
 ]);
 const STANDARD = ["email", "first_name", "last_name", "company", "title", "phone", "website", "linkedin_url", "city", "country"];
 const ALIASES: Record<string, string> = {

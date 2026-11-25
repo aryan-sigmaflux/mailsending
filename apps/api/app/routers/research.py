@@ -32,7 +32,7 @@ def out(r: SiteResearch, full: bool = True) -> dict:
     base = {
         "id": r.id, "domain": r.domain, "url": r.url, "status": r.status, "error": r.error, "score": r.score,
         "issue_count": len(r.issues or []), "metrics": r.metrics or {}, "researched_at": r.researched_at,
-        "keywords": r.keywords or [], "summary": r.summary,
+        "keywords": [{**k, "set": research.kw_set(r, k)} for k in r.keywords or []], "summary": r.summary,
     }
     if full:
         base.update(final_url=r.final_url, issues=r.issues or [], facts=r.facts or {}, keyword_source=r.keyword_source,

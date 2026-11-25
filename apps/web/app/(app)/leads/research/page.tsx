@@ -10,7 +10,7 @@ import { toast } from "@/components/toast";
 import { Empty, Meter, Modal, PageHeader, Skeleton, Spinner, confirmAction } from "@/components/ui";
 import { del, get, post } from "@/lib/api";
 import { ago, num } from "@/lib/format";
-import type { Contact, ContactList, Integration, Paged, Research, ResearchStatus, ResearchSummary, Severity } from "@/lib/types";
+import type { Contact, ContactList, Integration, KeywordRow, Paged, Research, ResearchStatus, ResearchSummary, Severity } from "@/lib/types";
 
 const PAGE = 50;
 const SEV: Record<Severity, string> = { high: "b-red", medium: "b-amber", low: "b-gray" };
@@ -35,7 +35,7 @@ function Sources({ integrations }: { integrations?: Integration[] }) {
   const has = (k: Integration["kind"]) => integrations?.some((i) => i.kind === k);
   const items: [boolean | undefined, React.ReactNode, string, string][] = [
     [true, <Globe key="g" />, "Website audit", "Always on — 35 checks: titles, meta, H1s, HTTPS, broken links, sitemap, mobile…"],
-    [has("ai"), <Bot key="b" />, "AI keywords", has("ai") ? "Your AI provider picks 5 product/service keywords" : "Not connected — keywords come from page headings (less accurate)"],
+    [has("ai"), <Bot key="b" />, "Smart keywords", has("ai") ? "AI reads each website and picks 5 product/service keywords (plus 5 basic ones from headings)" : "Not connected — only the 5 basic keywords from page headings are made"],
     [has("keywords"), <ChartLine key="c" />, "Volume & bids", has("keywords") ? "Search volume, competition and top-of-page bids" : "Not connected — keywords get no volume or bids"],
     [has("pagespeed"), <Gauge key="p" />, "PageSpeed", has("pagespeed") ? "Mobile performance score available (tick it below)" : "Optional — works without a key at low volume"],
   ];
@@ -137,6 +137,27 @@ function PlannerCard({ list }: { list: ContactList }) {
   );
 }
 
+function KeywordTable({ rows }: { rows: KeywordRow[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="table">
+        <thead><tr><th>Keyword</th><th>Monthly searches</th><th>Competition</th><th>Top-of-page bid</th><th>Avg CPC</th></tr></thead>
+        <tbody>
+          {rows.map((k) => (
+            <tr key={k.keyword}>
+              <td>{k.keyword}</td>
+              <td>{k.volume == null ? <span className="text-faint">—</span> : k.no_data ? <span className="text-muted" title="Keyword Planner had too few searches to report">no data (≈0)</span> : k.volume_range ? <span title="Ranged volume — Keyword Planner shows ranges for accounts without ad spend; the low end is used for conditions">{k.volume_range}</span> : num(k.volume)}{k.yoy_change && <small className="block text-[11px] text-muted">YoY {k.yoy_change}</small>}</td>
+              <td>{k.competition ? <span className={`badge ${k.competition === "HIGH" ? "b-red" : k.competition === "MEDIUM" ? "b-amber" : "b-green"}`}>{k.competition.toLowerCase()}{k.competition_index != null ? ` · ${k.competition_index}` : ""}</span> : <span className="text-faint">—</span>}</td>
+              <td>{k.low_bid == null && k.high_bid == null ? <span className="text-faint">—</span> : k.low_bid == null || k.high_bid == null ? money(k.low_bid ?? k.high_bid, k.currency) : `${money(k.low_bid)} – ${money(k.high_bid, k.currency)}`}</td>
+              <td>{money(k.cpc, k.cpc != null ? k.currency : undefined)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Detail({ id, onClose }: { id: string; onClose: () => void }) {
   const qc = useQueryClient();
   const q = useQuery({
@@ -173,27 +194,29 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
           <section>
             <h3 className="mb-2">Keywords</h3>
             {r.metrics_error && <p className="badge b-amber mb-2" style={{ whiteSpace: "normal", padding: "7px 10px" }}>{r.metrics_error}</p>}
-            {!r.keywords.length ? <p className="text-[13px] text-muted">No keywords — the site had no readable text.</p> : (
-              <div className="overflow-x-auto">
-                <table className="table">
-                  <thead><tr><th>Keyword</th><th>Monthly searches</th><th>Competition</th><th>Top-of-page bid</th><th>Avg CPC</th></tr></thead>
-                  <tbody>
-                    {r.keywords.map((k) => (
-                      <tr key={k.keyword}>
-                        <td>{k.keyword}</td>
-                        <td>{k.volume == null ? <span className="text-faint">—</span> : k.no_data ? <span className="text-muted" title="Keyword Planner had too few searches to report">no data (≈0)</span> : k.volume_range ? <span title="Ranged volume — Keyword Planner shows ranges for accounts without ad spend; the low end is used for conditions">{k.volume_range}</span> : num(k.volume)}{k.yoy_change && <small className="block text-[11px] text-muted">YoY {k.yoy_change}</small>}</td>
-                        <td>{k.competition ? <span className={`badge ${k.competition === "HIGH" ? "b-red" : k.competition === "MEDIUM" ? "b-amber" : "b-green"}`}>{k.competition.toLowerCase()}{k.competition_index != null ? ` · ${k.competition_index}` : ""}</span> : <span className="text-faint">—</span>}</td>
-                        <td>{k.low_bid == null && k.high_bid == null ? <span className="text-faint">—</span> : `${money(k.low_bid)} – ${money(k.high_bid, k.currency)}`}</td>
-                        <td>{money(k.cpc, k.cpc != null ? k.currency : undefined)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {!r.keywords.length && r.facts.smart_error !== "no_ai" ? <p className="text-[13px] text-muted">No keywords — the site had no readable text.</p> : (
+              <div className="flex flex-col gap-4">
+                {(["smart", "basic"] as const).map((set) => {
+                  const rows = r.keywords.filter((k) => k.set === set);
+                  return (
+                    <div key={set}>
+                      <div className="nav-label" style={{ padding: "0 0 6px" }}>
+                        {set === "smart" ? "Smart keywords · AI read the website" : "Basic keywords · from page title & headings"}
+                      </div>
+                      {set === "smart" && !rows.length ? (
+                        <p className="tile text-[12.5px] text-muted" style={{ padding: "8px 12px" }}>
+                          {r.facts.smart_error === "no_ai" || r.facts.smart_error === undefined
+                            ? <>Skipped — no AI provider connected. <Link href="/settings" className="text-pink">Connect one in Settings</Link>, then re-run research.</>
+                            : <>The AI request failed: {String(r.facts.smart_error)}</>}
+                        </p>
+                      ) : !rows.length ? <p className="text-[12.5px] text-muted">None found.</p> : <KeywordTable rows={rows} />}
+                    </div>
+                  );
+                })}
               </div>
             )}
             <small className="text-[11.5px] text-muted">
-              Keywords from {r.keyword_source === "ai" ? "your AI provider" : r.keyword_source === "heuristic" ? "page headings (connect an AI provider for better ones)" : "—"}
-              {r.metrics_source ? ` · numbers from ${({ google_ads: "Google Ads Keyword Planner", dataforseo: "DataForSEO", keyword_planner_csv: "your Keyword Planner export" } as Record<string, string>)[r.metrics_source] ?? r.metrics_source}` : ""}
+              {r.metrics_source ? `Numbers from ${({ google_ads: "Google Ads Keyword Planner", dataforseo: "DataForSEO", keyword_planner_csv: "your Keyword Planner export" } as Record<string, string>)[r.metrics_source] ?? r.metrics_source}` : "No volumes yet — use “Keyword Planner — volumes & bids” below the leads table"}
               {r.options.location_code ? ` · location ${r.options.location_code}` : ""}{cur ? ` · bids in ${cur}` : ""}
             </small>
           </section>
@@ -399,7 +422,7 @@ export default function ResearchPage() {
         {current && <PlannerCard key={current.id} list={current} />}
 
         <p className="text-[12px] text-muted">
-          Results are added to each lead as variables — <code className="text-pink">{"{{SiteScore}}"}</code>, <code className="text-pink">{"{{TopIssue}}"}</code>, <code className="text-pink">{"{{TopKeyword}}"}</code>, <code className="text-pink">{"{{TopKeywordVolume}}"}</code>, <code className="text-pink">{"{{Keyword1}}"}</code>… — and Condition steps in <Link href="/sequences" className="text-pink">Sequences</Link> can branch on any issue or number.
+          Results are added to each lead as variables — <code className="text-pink">{"{{SiteScore}}"}</code>, <code className="text-pink">{"{{TopIssue}}"}</code>, <code className="text-pink">{"{{TopKeyword}}"}</code>, <code className="text-pink">{"{{TopKeywordVolume}}"}</code>, <code className="text-pink">{"{{SmartKeyword1}}"}</code>… (AI), <code className="text-pink">{"{{Keyword1}}"}</code>… (page headings) — and Condition steps in <Link href="/sequences" className="text-pink">Sequences</Link> can branch on any issue or number.
         </p>
       </div>
       {open && <Detail id={open} onClose={() => setOpen(null)} />}
