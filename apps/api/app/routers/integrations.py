@@ -186,7 +186,7 @@ async def test_integration(integration_id: uuid.UUID, user: CurrentUser, db: DB)
             ok, msg = ps.get("score") is not None, f"PageSpeed works (google.com scored {ps.get('score')}/100 on mobile)"
         else:
             reply = await ai.complete(i.provider, key, "Reply with the single word: pong", model=(i.config or {}).get("model"),
-                                      base_url=(i.config or {}).get("base_url"), max_tokens=10)
+                                      base_url=(i.config or {}).get("base_url"), max_tokens=500)  # room for thinking models
             ok, msg = bool(reply.strip()), f"Model replied: {reply.strip()[:60]}"
     except Exception as e:  # noqa: BLE001
         ok, msg = False, f"{type(e).__name__}: {e}"[:300]

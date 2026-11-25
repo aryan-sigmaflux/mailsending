@@ -85,11 +85,31 @@ def heuristic_keywords(title: str, headings: list[str], description: str, text: 
     return picked[:n]
 
 
+AI_MAX_TOKENS = 2000
+
+
 def _json_from(reply: str) -> dict:
-    m = re.search(r"\{.*\}", reply or "", re.S)
-    if not m:
-        raise ValueError("The AI reply had no JSON")
-    return json.loads(m.group(0))
+    """The JSON object in the reply (code fences and chatter around it are fine). A reply that was cut off still
+    gives its keywords when the list itself is complete."""
+    text = reply or ""
+    m = re.search(r"\{.*\}", text, re.S)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except ValueError:
+            pass
+    lst = re.search(r'"keywords"\s*:\s*(\[[^\]]*\])', text)
+    if lst:
+        try:
+            summary = re.search(r'"summary"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+            return {"keywords": json.loads(lst.group(1)), "summary": json.loads(f'"{summary.group(1)}"') if summary else ""}
+        except ValueError:
+            pass
+    if not text.strip():
+        raise ValueError("The AI returned an empty reply — the model may have used all its tokens thinking; try a non-reasoning model")
+    if "{" in text and "}" not in text[text.index("{"):]:
+        raise ValueError(f"The AI reply was cut off before the JSON finished: {text[:120]!r}")
+    raise ValueError(f"The AI reply had no JSON: {text[:120]!r}")
 
 
 async def ai_keywords(integ: dict, domain: str, facts: dict, text: str, extra_texts: list[str], n: int = 5) -> tuple[str, list[str]]:
@@ -108,11 +128,12 @@ async def ai_keywords(integ: dict, domain: str, facts: dict, text: str, extra_te
         "services (not the business's own name). Each keyword: 2–4 words, lowercase, specific to what they offer, "
         "the way people actually search (e.g. \"industrial air compressor\", \"payroll software for small business\"). "
         "Only add a city or region if the business clearly serves one local area.\n"
-        'Reply with JSON only: {"summary": "<one sentence: what they sell and to whom>", "keywords": ["...", ...]}'
+        'Reply with JSON only, keywords first: {"keywords": ["...", ...], "summary": "<what they sell and to whom, max 25 words>"}'
     )
+    # Thinking models (e.g. via OpenRouter) spend part of max_tokens on reasoning before they answer, so leave room.
     reply = await ai.complete(integ["provider"], integ["api_key"], prompt, model=integ.get("model"),
                               base_url=integ.get("base_url"), system="You are a precise B2B SEO strategist. Reply with JSON only.",
-                              max_tokens=400)
+                              max_tokens=AI_MAX_TOKENS)
     data = _json_from(reply)
     kws = [re.sub(r"\s+", " ", str(k)).strip().lower() for k in data.get("keywords") or [] if str(k).strip()]
     return str(data.get("summary") or "").strip()[:500], list(dict.fromkeys(kws))[:n]
