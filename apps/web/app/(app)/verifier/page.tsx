@@ -1,8 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleCheck, CircleExclamationPoint, MailCheck, Search } from "lucide-react";
-import { useState } from "react";
+import { CircleCheck, CircleExclamationPoint, MailCheck, Play, Search, Square, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "@/components/toast";
 import { Empty, Field, Meter, PageHeader, Spinner, VerifyBadge } from "@/components/ui";
 import { get, post } from "@/lib/api";
@@ -22,6 +22,54 @@ const REASONS: Record<string, string> = {
   greylisted_or_temp_failure: "The server asked us to retry later (greylisting).",
 };
 
+interface BulkJob {
+  state: "idle" | "running" | "paused" | "done" | "no_credits";
+  total: number; done: number; failed: number; remaining: number;
+  by_status: Partial<Record<VerifyStatus, number>>; current: string[];
+}
+
+const JOB_LABEL: Record<BulkJob["state"], [string, string]> = {
+  idle: ["b-gray", "Idle"],
+  running: ["b-green", "Verifying"],
+  paused: ["b-amber", "Stopped"],
+  done: ["b-blue", "Finished"],
+  no_credits: ["b-red", "Out of credits"],
+};
+
+function JobCard({ j, busy, onAction }: { j: BulkJob; busy: boolean; onAction: (a: "stop" | "start" | "clear") => void }) {
+  const processed = j.done + j.failed;
+  const [cls, label] = JOB_LABEL[j.state];
+  const running = j.state === "running";
+  return (
+    <article className="card in">
+      <div className="flex items-center gap-3 flex-wrap">
+        <h3 className="flex items-center gap-2">{running && <Spinner size={14} />} {running ? "Verifying…" : "Bulk verification"}</h3>
+        <span className={`badge ${cls}`}>{label}</span>
+        <div className="flex-1" />
+        {running && <button className="btn btn-dark btn-sm" disabled={busy} onClick={() => onAction("stop")}>{busy ? <Spinner size={14} /> : <Square />} Stop</button>}
+        {!running && j.remaining > 0 && <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => onAction("start")}>{busy ? <Spinner size={14} /> : <Play />} Start</button>}
+        {!running && <button className="btn btn-dark btn-sm" disabled={busy} onClick={() => onAction("clear")} title={j.remaining ? "Discard the remaining emails" : "Hide this card"}><X /> {j.remaining ? "Discard" : "Dismiss"}</button>}
+      </div>
+      <div className="flex items-baseline gap-2 mt-4">
+        <span className="text-[28px] font-medium">{num(processed)}</span>
+        <span className="text-[14px] text-muted font-light">/ {num(j.total)} verified</span>
+        <span className="flex-1" />
+        <span className="text-[12.5px] text-txt-2">{num(j.remaining)} left</span>
+      </div>
+      <div className="mt-3"><Meter value={processed} max={j.total || 1} tone={j.state === "no_credits" ? "red" : j.state === "paused" ? "amber" : "pink"} /></div>
+      <div className="flex flex-wrap gap-x-5 gap-y-2 mt-4 text-[12.5px]">
+        {(["valid", "invalid", "catch_all", "risky", "unknown"] as VerifyStatus[]).map((k) => (
+          <span key={k} className="flex items-center gap-2"><VerifyBadge status={k} /><span>{num(j.by_status[k] ?? 0)}</span></span>
+        ))}
+        {j.failed > 0 && <span className="flex items-center gap-2"><span className="badge b-red">Errored</span><span>{num(j.failed)}</span></span>}
+      </div>
+      {running && j.current.length > 0 && <p className="text-[12px] text-muted mt-3 truncate-1">Checking {j.current.join(", ")}</p>}
+      {j.state === "paused" && j.remaining > 0 && <p className="text-[12px] text-muted mt-3">Stopped — press Start to pick up where it left off.</p>}
+      {j.state === "no_credits" && <p className="text-[12px] text-muted mt-3">Ran out of verification credits. Start again once credits are available.</p>}
+    </article>
+  );
+}
+
 function explain(reason: string) {
   if (reason.startsWith("smtp_unreachable")) return "Couldn't reach the mail server on port 25 from this server. Deploy the verifier on a host with outbound port 25 open.";
   if (reason.startsWith("bad_syntax")) return "Not a valid email address.";
@@ -38,12 +86,39 @@ export default function VerifierPage() {
   const lists = useQuery({ queryKey: ["lists"], queryFn: () => get<ContactList[]>("/lists") });
   const refresh = () => { qc.invalidateQueries({ queryKey: ["verify-summary"] }); qc.invalidateQueries({ queryKey: ["verify-history"] }); };
 
+  const job = useQuery({
+    queryKey: ["verify-job"],
+    queryFn: () => get<BulkJob>("/verify/bulk/status"),
+    refetchInterval: (q) => (q.state.data?.state === "running" ? 2000 : false),
+  });
+  const setJob = (j: BulkJob) => qc.setQueryData(["verify-job"], j);
+  // Keep the credits / history cards in step with the job while it runs, and once more when it stops.
+  const lastDone = useRef<number | null>(null);
+  useEffect(() => {
+    const d = job.data?.done;
+    if (d != null && lastDone.current != null && d !== lastDone.current) refresh();
+    lastDone.current = d ?? null;
+  }, [job.data?.done]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const one = useMutation({ mutationFn: () => post<Result>("/verify", { email }), onSuccess: refresh, onError: toast.err });
   const many = useMutation({
-    mutationFn: () => post<{ queued: number; skipped_no_credits: number }>("/verify/bulk", { emails: bulk.split(/[\s,;]+/).filter(Boolean), list_id: listId || null }),
-    onSuccess: (r) => { toast.ok(`Verifying ${r.queued} emails in the background`); setBulk(""); refresh(); },
+    mutationFn: () => post<{ queued: number; skipped_no_credits: number; job: BulkJob }>("/verify/bulk", { emails: bulk.split(/[\s,;]+/).filter(Boolean), list_id: listId || null }),
+    onSuccess: (r) => {
+      toast.ok(r.queued ? `Added ${num(r.queued)} emails to verification${r.skipped_no_credits ? ` (${num(r.skipped_no_credits)} skipped — no credits)` : ""}` : "Those emails are already queued");
+      setBulk(""); setJob(r.job); refresh();
+    },
     onError: toast.err,
   });
+  const ctl = useMutation({
+    mutationFn: (a: "stop" | "start" | "clear") => post<BulkJob | { ok: boolean }>(`/verify/bulk/${a}`, {}),
+    onSuccess: (r, a) => {
+      if (a === "clear") qc.invalidateQueries({ queryKey: ["verify-job"] });
+      else setJob(r as BulkJob);
+      refresh();
+    },
+    onError: toast.err,
+  });
+  const j = job.data;
   const r = one.data;
   const s = summary.data;
 
@@ -87,7 +162,7 @@ export default function VerifierPage() {
               </select>
             </Field>
             {!listId && <Field label="Emails (one per line, or comma separated)"><textarea className="textarea" value={bulk} onChange={(e) => setBulk(e.target.value)} placeholder={"asha@acme.in\nravi@beta.in"} /></Field>}
-            <button className="btn btn-primary self-end" disabled={many.isPending || (!listId && !bulk.trim())} onClick={() => many.mutate()}>{many.isPending ? <Spinner /> : <><MailCheck /> Start verification</>}</button>
+            <button className="btn btn-primary self-end" disabled={many.isPending || (!listId && !bulk.trim())} onClick={() => many.mutate()}>{many.isPending ? <Spinner /> : <><MailCheck /> {j?.state === "running" ? "Add to verification" : "Start verification"}</>}</button>
           </div>
         </article>
 
@@ -102,6 +177,8 @@ export default function VerifierPage() {
           </div>
         </article>
       </div>
+
+      {j && j.state !== "idle" && <JobCard j={j} busy={ctl.isPending} onAction={(a) => ctl.mutate(a)} />}
 
       <article className="card in">
         <h3>Recent checks</h3>

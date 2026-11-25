@@ -1,15 +1,12 @@
-import asyncio
 import uuid
-from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.core.deps import DB, CurrentUser, get_owned
-from app.database import async_session
-from app.models import Contact, ContactList, User, Verification, list_contacts
-from app.services import limits
+from app.models import Contact, ContactList, Verification, list_contacts
+from app.services import bulk_verify, limits
 from app.services.verifier import verify_email
 
 router = APIRouter(prefix="/verify", tags=["verifier"])
@@ -25,51 +22,20 @@ class BulkIn(BaseModel):
     only_unknown: bool = True
 
 
-async def _record(db, user_id, res: dict):
-    db.add(Verification(user_id=user_id, email=res["email"], status=res["status"], reason=res["reason"], details=res))
-    await limits.bump_usage(db, user_id, verifications=1)
-
-
 @router.post("")
 async def verify_one(body: VerifyIn, user: CurrentUser, db: DB):
     if await limits.verification_credits_left(db, user) <= 0:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "No verification credits left this month")
     res = await verify_email(body.email)
-    await _record(db, user.id, res)
-    c = (await db.execute(select(Contact).where(Contact.user_id == user.id, Contact.email == res["email"]))).scalar_one_or_none()
-    if c:
-        c.verify_status, c.verify_reason, c.verified_at = res["status"], res["reason"], datetime.now(timezone.utc)
+    await bulk_verify.save_result(db, user.id, res)
     await db.commit()
     return res
 
 
-async def _bulk_job(user_id: uuid.UUID, emails: list[str]):
-    sem = asyncio.Semaphore(5)
-
-    async def one(email: str):
-        async with sem:
-            return await verify_email(email)
-
-    for i in range(0, len(emails), 25):
-        chunk = emails[i:i + 25]
-        results = await asyncio.gather(*(one(e) for e in chunk), return_exceptions=True)
-        async with async_session() as db:
-            user = await db.get(User, user_id)
-            for res in results:
-                if isinstance(res, Exception):
-                    continue
-                if await limits.verification_credits_left(db, user) <= 0:
-                    await db.commit()
-                    return
-                await _record(db, user_id, res)
-                c = (await db.execute(select(Contact).where(Contact.user_id == user_id, Contact.email == res["email"]))).scalar_one_or_none()
-                if c:
-                    c.verify_status, c.verify_reason, c.verified_at = res["status"], res["reason"], datetime.now(timezone.utc)
-                await db.commit()
-
+# Bulk jobs live in Redis (see app.services.bulk_verify). Stop / Start pause and resume where it left off.
 
 @router.post("/bulk")
-async def verify_bulk(body: BulkIn, user: CurrentUser, db: DB, background: BackgroundTasks):
+async def verify_bulk(body: BulkIn, user: CurrentUser, db: DB):
     emails = [e.strip().lower() for e in body.emails if "@" in e]
     if body.list_id:
         await get_owned(db, ContactList, body.list_id, user)
@@ -84,9 +50,37 @@ async def verify_bulk(body: BulkIn, user: CurrentUser, db: DB, background: Backg
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nothing to verify")
     if credits <= 0:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "No verification credits left this month")
-    queued = emails[:credits]
-    background.add_task(_bulk_job, user.id, queued)
-    return {"queued": len(queued), "skipped_no_credits": len(emails) - len(queued)}
+    queued, skipped = await bulk_verify.enqueue(user.id, emails, credits)
+    return {"queued": queued, "skipped_no_credits": skipped, "job": await bulk_verify.status(user.id)}
+
+
+@router.get("/bulk/status")
+async def bulk_status(user: CurrentUser):
+    return await bulk_verify.status(user.id)
+
+
+@router.post("/bulk/stop")
+async def bulk_stop(user: CurrentUser):
+    if not await bulk_verify.stop(user.id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "No verification is running")
+    return await bulk_verify.status(user.id)
+
+
+@router.post("/bulk/start")
+async def bulk_start(user: CurrentUser, db: DB):
+    if not await bulk_verify.remaining(user.id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Nothing left to verify")
+    if await limits.verification_credits_left(db, user) <= 0:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "No verification credits left this month")
+    await bulk_verify.start(user.id)
+    return await bulk_verify.status(user.id)
+
+
+@router.post("/bulk/clear")
+async def bulk_clear(user: CurrentUser):
+    if not await bulk_verify.clear(user.id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Stop the verification first")
+    return {"ok": True}
 
 
 @router.get("/history")

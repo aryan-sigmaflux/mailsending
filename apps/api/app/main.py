@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,8 +8,17 @@ from app.routers import (
     admin, auth, campaigns, contacts, dashboard, domains, integrations, mailboxes, messages, sequences, templates, tracking,
     verifier,
 )
+from app.services import bulk_verify
 
-app = FastAPI(title=settings.APP_NAME, version="0.1.0", docs_url="/docs", openapi_url="/openapi.json")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await bulk_verify.resume_running()  # carry on with bulk verifications interrupted by a restart
+    yield
+    await bulk_verify.shutdown()
+
+
+app = FastAPI(title=settings.APP_NAME, version="0.1.0", docs_url="/docs", openapi_url="/openapi.json", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
