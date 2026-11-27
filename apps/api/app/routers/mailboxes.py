@@ -82,6 +82,7 @@ class MailboxOut(ORM):
     health_score: int
     last_sent_at: datetime | None
     created_at: datetime
+    warmup_started_at: datetime | None = None
     sent_today: int = 0
 
 
@@ -155,6 +156,9 @@ async def update_mailbox(mailbox_id: uuid.UUID, body: MailboxUpdate, user: Curre
     if mb.provider != "smtp":
         for k in [k for k in data if k.startswith(("smtp_", "imap_"))]:
             data.pop(k)
+    if data.get("warmup_enabled") is not None and data["warmup_enabled"] != mb.warmup_enabled:
+        # Switching warmup on restarts the ramp-up schedule at day 1.
+        mb.warmup_started_at = datetime.now(timezone.utc) if data["warmup_enabled"] else None
     for k, v in data.items():
         setattr(mb, k, v)
     if mb.max_delay_seconds < mb.min_delay_seconds:

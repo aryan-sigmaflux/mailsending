@@ -58,9 +58,12 @@ class Contact(IdMixin, TimestampMixin, Base):
 
 
 class Suppression(Base):
+    """The do-not-contact list. ``email`` is an exact address, or a whole domain written as "@domain.com"."""
+
     __tablename__ = "suppressions"
 
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     email: Mapped[str] = mapped_column(String(320), primary_key=True)
-    reason: Mapped[str] = mapped_column(String(30))  # unsubscribed | bounced | complained | manual
+    reason: Mapped[str] = mapped_column(String(30))  # unsubscribed | bounced | complained | manual (added by the user)
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

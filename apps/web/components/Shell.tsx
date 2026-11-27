@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Bell, FileText, Flame, Globe, Inbox, LayoutDashboard, LifeBuoy, LogOut, Mail, MailCheck, ScanSearch, Send, Settings,
+  Bell, Contact, FileText, Flame, Globe, Inbox, LayoutDashboard, LifeBuoy, LogOut, Mail, MailCheck, ScanSearch, Send, Settings,
   ShieldCheck, Sparkles, Users, Workflow,
 } from "lucide-react";
 import Link from "next/link";
@@ -27,6 +27,7 @@ const NAV: { label?: string; items: Item[] }[] = [
   {
     label: "Leads",
     items: [
+      { href: "/contacts", label: "Contacts", icon: <Contact /> },
       { href: "/leads", label: "Lead lists", icon: <Users /> },
       { href: "/leads/research", label: "Research leads", icon: <ScanSearch /> },
       { href: "/lead-finder", label: "Lead Finder", icon: <Sparkles />, feature: "apollo" },

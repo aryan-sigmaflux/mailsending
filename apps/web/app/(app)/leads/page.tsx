@@ -1,14 +1,21 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileUp, MailCheck, Plus, ScanSearch, Search, Trash, Upload, Users } from "lucide-react";
+import { Ban, FileUp, History, MailCheck, Plus, ScanSearch, Search, Trash, Upload, Users } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { ContactHistoryModal, OutreachBadges } from "@/components/outreach";
 import { toast } from "@/components/toast";
 import { Empty, Field, Modal, PageHeader, Skeleton, Spinner, VerifyBadge, confirmAction } from "@/components/ui";
 import { BASE_URL, del, get, post, tokens } from "@/lib/api";
-import { num } from "@/lib/format";
-import type { Contact, ContactList, Paged, ResearchSummary } from "@/lib/types";
+import { ago, num } from "@/lib/format";
+import type { Contact, ContactList, DncEntry, OutreachHistory, Paged, ResearchSummary } from "@/lib/types";
+
+interface ImportResult {
+  rows: number; imported: number; updated: number; invalid: number; duplicates: number; suppressed: number; over_limit: number;
+  previously_contacted: number; skip_dnc: boolean; flagged_total: number;
+  flagged: { email: string; dnc: DncEntry | null; history: OutreachHistory | null; skipped: boolean }[];
+}
 
 const TARGETS = [
   ["email", "Email"], ["first_name", "First name"], ["last_name", "Last name"], ["company", "Company"], ["title", "Job title"],
@@ -21,7 +28,8 @@ function ImportModal({ list, onClose }: { list: ContactList | null; onClose: () 
   const [headers, setHeaders] = useState<{ name: string; suggested: string; sample: string[] }[]>([]);
   const [map, setMap] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<Record<string, number> | null>(null);
+  const [skipDnc, setSkipDnc] = useState(true);
+  const [result, setResult] = useState<ImportResult | null>(null);
 
   async function pick(f: File) {
     setFile(f);
@@ -40,8 +48,9 @@ function ImportModal({ list, onClose }: { list: ContactList | null; onClose: () 
     const fd = new FormData();
     fd.append("file", file);
     fd.append("mapping", JSON.stringify(map));
+    fd.append("skip_dnc", String(skipDnc));
     try {
-      const r = await post<Record<string, number>>(`/lists/${list.id}/import`, fd);
+      const r = await post<ImportResult>(`/lists/${list.id}/import`, fd);
       setResult(r);
       qc.invalidateQueries({ queryKey: ["lists"] });
       qc.invalidateQueries({ queryKey: ["contacts"] });
@@ -54,11 +63,46 @@ function ImportModal({ list, onClose }: { list: ContactList | null; onClose: () 
   return (
     <Modal open onClose={onClose} wide title={`Import CSV into “${list.name}”`} sub="Every column becomes a template variable — e.g. a “Industry” column is available as {{Industry}}.">
       {result ? (
-        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-          {[["Imported", result.imported, "text-green"], ["Updated", result.updated, ""], ["Invalid emails", result.invalid, "text-red"], ["Duplicates", result.duplicates, ""], ["Suppressed", result.suppressed, "text-amber"], ["Over limit", result.over_limit, "text-red"]].map(([l, v, c]) => (
-            <div key={l as string} className="tile"><div className={`text-[22px] font-medium ${c}`}>{num(v as number)}</div><div className="text-[12px] text-muted">{l}</div></div>
-          ))}
-          <div className="col-span-3 flex justify-end"><button className="btn btn-primary" onClick={onClose}>Done</button></div>
+        <div className="flex flex-col gap-4">
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+            {([
+              ["Imported", result.imported, "text-green", ""], ["Updated", result.updated, "", "Already in your account — added to this list"],
+              ["Do not contact", result.suppressed, "text-red", result.skip_dnc ? "Left out of this list" : "Added to the list but will never be emailed"],
+              ["Contacted before", result.previously_contacted, "text-blue", "Already emailed by a campaign or one-off email"],
+              ["Invalid emails", result.invalid, "text-red", ""], ["Duplicates in file", result.duplicates, "", ""], ["Over contact limit", result.over_limit, "text-red", ""],
+            ] as const).filter(([l, v]) => v || !["Over contact limit", "Duplicates in file", "Invalid emails"].includes(l)).map(([l, v, c, hint]) => (
+              <div key={l} className="tile" title={hint}><div className={`text-[22px] font-medium ${v ? c : ""}`}>{num(v)}</div><div className="text-[12px] text-muted">{l}</div></div>
+            ))}
+          </div>
+          {result.flagged.length > 0 && (
+            <div className="tile" style={{ boxShadow: "inset 0 0 0 1px rgba(255,123,138,.35)" }}>
+              <div className="flex items-center gap-2 mb-2">
+                <Ban width={15} className="text-red" />
+                <b className="font-medium text-[13px]">{num(result.flagged_total)} {result.flagged_total === 1 ? "lead is" : "leads are"} flagged</b>
+                <span className="flex-1" />
+                <Link href="/contacts?tab=dnc" className="link text-[12px]">Manage do-not-contact</Link>
+              </div>
+              <div className="overflow-y-auto" style={{ maxHeight: 260 }}>
+                <table className="table">
+                  <thead><tr><th>Email</th><th>Flag</th><th>Last contacted</th><th>Campaigns</th><th /></tr></thead>
+                  <tbody>
+                    {result.flagged.map((f) => (
+                      <tr key={f.email}>
+                        <td className="truncate-1 max-w-[220px]">{f.email}</td>
+                        <td><OutreachBadges c={f} /></td>
+                        <td className="text-txt-2 whitespace-nowrap">{f.history ? ago(f.history.last_sent_at) : <span className="text-faint">—</span>}</td>
+                        <td className="text-txt-2 truncate-1 max-w-[180px]">{f.history ? [...f.history.campaigns.map((x) => x.name), ...(f.history.direct ? ["One-off"] : [])].join(", ") : <span className="text-faint">—</span>}</td>
+                        <td className="text-[11.5px] whitespace-nowrap">{f.skipped ? <span className="text-red">Not imported</span> : <span className="text-muted">In list</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {result.flagged_total > result.flagged.length && <p className="text-[11.5px] text-muted mt-2">Showing the first {num(result.flagged.length)}.</p>}
+              <p className="text-[11.5px] text-muted mt-2">Campaigns never email do-not-contact leads, and skip leads contacted before unless you turn that off in the campaign.</p>
+            </div>
+          )}
+          <div className="flex justify-end"><button className="btn btn-primary" onClick={onClose}>Done</button></div>
         </div>
       ) : !headers.length ? (
         <label className="tile flex flex-col items-center justify-center text-center cursor-pointer" style={{ padding: 40, borderStyle: "dashed" }}>
@@ -89,8 +133,11 @@ function ImportModal({ list, onClose }: { list: ContactList | null; onClose: () 
               </tbody>
             </table>
           </div>
-          <div className="flex justify-between items-center mt-5">
-            <span className="text-[12.5px] text-muted">{file?.name}</span>
+          <div className="flex justify-between items-center gap-4 mt-5 flex-wrap">
+            <div className="flex flex-col gap-1">
+              <span className="text-[12.5px] text-muted">{file?.name}</span>
+              <label className="check text-[12.5px]"><input type="checkbox" checked={skipDnc} onChange={(e) => setSkipDnc(e.target.checked)} /> Leave out do-not-contact addresses</label>
+            </div>
             <div className="flex gap-2">
               <button className="btn btn-dark" onClick={() => setHeaders([])}>Back</button>
               <button className="btn btn-primary" disabled={busy || !Object.values(map).includes("email")} onClick={run}>
@@ -112,6 +159,7 @@ export default function LeadsPage() {
   const [newList, setNewList] = useState(false);
   const [listName, setListName] = useState("");
   const [importing, setImporting] = useState<ContactList | null>(null);
+  const [historyOf, setHistoryOf] = useState<string | null>(null);
 
   const lists = useQuery({ queryKey: ["lists"], queryFn: () => get<ContactList[]>("/lists") });
   const active = lists.data?.some((l) => l.id === picked) ? picked : (lists.data?.[0]?.id ?? null);
@@ -186,7 +234,12 @@ export default function LeadsPage() {
                     <tbody>
                       {contacts.data.items.map((c) => (
                         <tr key={c.id}>
-                          <td className="truncate-1 max-w-[240px]">{c.email}{c.unsubscribed && <span className="badge b-amber ml-2">unsub</span>}</td>
+                          <td className="max-w-[300px]">
+                            <div className="truncate-1">{c.email}</div>
+                            {(c.dnc || c.history) ? (
+                              <button className="mt-1 text-left" title="Outreach history" onClick={() => setHistoryOf(c.id)}><OutreachBadges c={c} /></button>
+                            ) : c.unsubscribed && <span className="badge b-amber mt-1">unsub</span>}
+                          </td>
                           <td>{[c.first_name, c.last_name].filter(Boolean).join(" ") || <span className="text-faint">—</span>}</td>
                           <td className="truncate-1 max-w-[180px]">{c.company || <span className="text-faint">—</span>}</td>
                           <td className="truncate-1 max-w-[160px] text-txt-2">{c.title}</td>
@@ -198,7 +251,10 @@ export default function LeadsPage() {
                             return <span className={`badge ${r.score == null ? "b-gray" : r.score >= 80 ? "b-green" : r.score >= 50 ? "b-amber" : "b-red"}`} title={`${r.issue_count} issues · ${r.domain}`}>{r.score}/100 · {r.issue_count} issues</span>;
                           })()}</td>
                           {current.columns.slice(0, 3).map((k) => <td key={k} className="text-txt-2 truncate-1 max-w-[140px]">{c.fields[k] ?? ""}</td>)}
-                          <td><button className="btn btn-icon btn-sm btn-dark" title="Delete contact" onClick={() => removeContact.mutate(c.id)}><Trash /></button></td>
+                          <td className="whitespace-nowrap">
+                            <button className="btn btn-icon btn-sm btn-dark mr-1" title="Outreach history" onClick={() => setHistoryOf(c.id)}><History /></button>
+                            <button className="btn btn-icon btn-sm btn-dark" title="Delete contact" onClick={() => removeContact.mutate(c.id)}><Trash /></button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -221,6 +277,7 @@ export default function LeadsPage() {
         <Field label="List name"><input className="input" autoFocus value={listName} onChange={(e) => setListName(e.target.value)} placeholder="Manufacturers · India · Q4" onKeyDown={(e) => e.key === "Enter" && listName && create.mutate()} /></Field>
       </Modal>
       <ImportModal key={importing?.id ?? "none"} list={importing} onClose={() => setImporting(null)} />
+      <ContactHistoryModal contactId={historyOf} onClose={() => setHistoryOf(null)} />
     </>
   );
 }

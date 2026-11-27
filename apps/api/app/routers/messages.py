@@ -9,8 +9,8 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
 
 from app.core.deps import DB, CurrentUser, get_owned
-from app.models import Contact, Mailbox, Message, Suppression, Template
-from app.services import limits, renderer, transport
+from app.models import Contact, Mailbox, Message, Template
+from app.services import limits, outreach, renderer, transport
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
@@ -33,8 +33,11 @@ async def send_one(body: ComposeIn, user: CurrentUser, db: DB):
     if body.template_id:
         await get_owned(db, Template, body.template_id, user)
     to = str(body.to).strip().lower()
-    if await db.get(Suppression, (user.id, to)):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{to} is on your suppression list (unsubscribed or bounced)")
+    entry = await outreach.blocked(db, user.id, to)
+    if entry:
+        what = "domain" if entry["entry"].startswith("@") else "address"
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"{to} is on your do-not-contact list ({entry['label'].lower()} — {what} {entry['entry']})")
     if await limits.sending_capacity(db, user) <= 0:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "You've reached your daily or monthly sending limit")
 

@@ -11,7 +11,8 @@ import { get, post, put } from "@/lib/api";
 import { DAYS, TIMEZONES, ago, num, pct, until } from "@/lib/format";
 import type { Campaign, ContactList, Mailbox, Paged, Sequence, Template } from "@/lib/types";
 
-interface Preflight { errors: string[]; audience: number; variables: string[]; missing: { variable: string; leads: number }[]; leads_missing: number; capacity_today: number; mailbox_capacity_per_day: number }
+interface Excluded { unsubscribed: number; invalid: number; dnc: number; contacted: number; contacted_included: number }
+interface Preflight { errors: string[]; audience: number; excluded: Excluded; variables: string[]; missing: { variable: string; leads: number }[]; leads_missing: number; capacity_today: number; mailbox_capacity_per_day: number }
 interface CC { id: string; email: string; first_name: string; company: string; state: string; current_node: string | null; next_run_at: string | null; steps_sent: number; last_sent_at: string | null; error: string | null; opened_at: string | null; clicked_at: string | null; replied_at: string | null; opens: number; clicks: number }
 
 const when = (iso: string) => new Date(iso).toLocaleString();
@@ -153,6 +154,10 @@ function Setup({ c }: { c: Campaign }) {
               <Field label="Max emails per day (this campaign)"><input className="input" type="number" min={1} value={f.settings.daily_cap} onChange={(e) => set({ settings: { ...f.settings, daily_cap: +e.target.value } })} /></Field>
               <label className="flex items-center gap-3 text-[13.5px] mt-6"><Toggle on={f.settings.stop_on_reply} onChange={(v) => set({ settings: { ...f.settings, stop_on_reply: v } })} label="Stop on reply" /> Stop sequence when a lead replies</label>
             </div>
+            <label className="flex items-start gap-3 text-[13.5px] mt-4">
+              <Toggle on={f.settings.skip_contacted ?? true} onChange={(v) => set({ settings: { ...f.settings, skip_contacted: v } })} label="Skip leads contacted before" />
+              <span>Skip leads we&apos;ve already emailed<small className="block text-[11.5px] text-muted mt-0.5">From another campaign or a one-off email. Do-not-contact leads are always skipped.</small></span>
+            </label>
           </article>
         </div>
 
@@ -166,6 +171,19 @@ function Setup({ c }: { c: Campaign }) {
                 <div><div className="text-[20px] font-medium">{num(pf.mailbox_capacity_per_day)}</div><div className="text-[11.5px] text-muted">mailbox capacity / day</div></div>
                 <div className="col-span-2"><div className="text-[12px] text-txt-2">Your remaining quota today: <b>{num(pf.capacity_today)}</b> emails</div></div>
               </div>
+              {(() => {
+                const x = pf.excluded;
+                const rows = ([["dnc", "on the do-not-contact list"], ["contacted", "already contacted — skipped"], ["unsubscribed", "unsubscribed"], ["invalid", "invalid email"]] as const).filter(([k]) => x?.[k]);
+                if (!rows.length && !x?.contacted_included) return null;
+                return (
+                  <div className="tile text-[12px] text-txt-2 flex flex-col gap-1">
+                    {rows.length > 0 && <b className="font-medium text-[12.5px] text-txt">Left out of this campaign</b>}
+                    {rows.map(([k, l]) => <div key={k}><b className="font-medium">{num(x[k])}</b> {l}</div>)}
+                    {x.contacted_included > 0 && <div className="text-amber"><b className="font-medium">{num(x.contacted_included)}</b> of the sendable leads were contacted before — they will be emailed again</div>}
+                    <Link href="/contacts" className="link text-[11.5px] mt-0.5">See contact history</Link>
+                  </div>
+                );
+              })()}
               {pf.variables.length > 0 && <div className="text-[12px] text-txt-2">Variables used: {pf.variables.map((v) => <span key={v} className="badge b-pink mr-1 mb-1">{`{{${v}}}`}</span>)}</div>}
               {pf.missing.length > 0 && (
                 <div className="tile" style={{ boxShadow: "inset 0 0 0 1px rgba(245,194,107,.4)" }}>

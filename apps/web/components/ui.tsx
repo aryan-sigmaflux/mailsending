@@ -2,6 +2,7 @@
 
 import { LoaderCircle, Mail, Server, X } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { VerifyStatus } from "@/lib/types";
 
 export function Modal({ open, onClose, title, sub, children, wide, footer }: {
@@ -13,8 +14,9 @@ export function Modal({ open, onClose, title, sub, children, wide, footer }: {
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
   }, [open, onClose]);
-  if (!open) return null;
-  return (
+  if (!open || typeof document === "undefined") return null;
+  // Portal to <body>: an animated ancestor (.in uses transform) would otherwise trap the fixed overlay inside it.
+  return createPortal(
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="flex items-start justify-between gap-4 mb-5">
@@ -27,7 +29,8 @@ export function Modal({ open, onClose, title, sub, children, wide, footer }: {
         {children}
         {footer && <div className="flex justify-end gap-2 mt-6">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

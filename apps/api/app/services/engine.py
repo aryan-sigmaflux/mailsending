@@ -24,7 +24,7 @@ from app.database import async_session
 from app.models import Campaign, CampaignContact, Contact, Mailbox, Message, SiteResearch, Suppression, Template, User
 from app.models.campaign import LIVE_STATES
 from app.services import graph as g
-from app.services import limits, renderer, research, transport
+from app.services import limits, outreach, renderer, research, transport
 from app.services.schedule import add_wait, in_window, is_instant, next_window_start
 
 log = logging.getLogger("engine")
@@ -251,9 +251,18 @@ async def _send(ctx: Ctx, cc: CampaignContact, node: dict) -> str:
     if not contact or contact.unsubscribed:
         _finish(cc, "stopped")
         return "stopped"
-    if await db.get(Suppression, (ctx.user.id, contact.email)):
+    entry = await outreach.blocked(db, ctx.user.id, contact.email)
+    if entry:  # added to do-not-contact (address or whole domain) after enrollment
+        cc.error = f"On the do-not-contact list ({entry['entry']})"
         _finish(cc, "stopped")
         return "stopped"
+    if cc.steps_sent == 0 and (camp.settings or {}).get("skip_contacted", True):
+        # Re-checked at the first send: an overlapping campaign may have emailed them since this one launched.
+        q = select(outreach.contacted_clause(ctx.user.id, contact.email, exclude_campaign=camp.id))
+        if (await db.execute(q)).scalar():
+            cc.error = "Already contacted by another campaign or email"
+            _finish(cc, "stopped")
+            return "stopped"
 
     if not in_window(camp.schedule or {}, now):
         return _defer(cc, next_window_start(camp.schedule or {}, now))

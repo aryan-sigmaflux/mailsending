@@ -92,6 +92,8 @@ export interface Mailbox {
   max_delay_seconds: number;
   warmup_enabled: boolean;
   warmup: { start_per_day: number; ramp_per_day: number; max_per_day: number; reply_rate: number };
+  /** When warmup was switched on — day 1 of the ramp-up. */
+  warmup_started_at: string | null;
   status: "active" | "error" | "paused";
   last_error: string | null;
   health_score: number;
@@ -129,6 +131,19 @@ export interface Contact {
   unsubscribed: boolean;
   research_domain: string | null;
   created_at: string;
+  /** The do-not-contact entry blocking this address (exact address or "@domain"), if any. */
+  dnc?: DncEntry | null;
+  /** What we've already sent this address; null when never emailed. */
+  history?: OutreachHistory | null;
+}
+
+export interface DncEntry { entry: string; reason: string; label: string; note: string }
+
+export interface OutreachHistory {
+  sent: number; last_sent_at: string; opened: number; clicked: number; replied: number; bounced: number;
+  campaigns: { id: string; name: string }[];
+  /** At least one one-off email composed outside a campaign. */
+  direct: boolean;
 }
 
 export type VerifyStatus = "valid" | "invalid" | "catch_all" | "risky" | "unknown";
@@ -191,7 +206,8 @@ export interface Campaign {
   mailbox_ids: string[];
   /** mode "instant" sends any day/time until done; "window" (also when missing, for older campaigns) uses days + start–end. */
   schedule: { mode?: "instant" | "window"; timezone: string; days: number[]; start: string; end: string; start_at: string | null };
-  settings: { daily_cap: number; stop_on_reply: boolean };
+  /** skip_contacted (default on): leave out leads already emailed by another campaign or a one-off email. */
+  settings: { daily_cap: number; stop_on_reply: boolean; skip_contacted?: boolean };
   started_at: string | null;
   completed_at: string | null;
   created_at: string;

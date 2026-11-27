@@ -9,11 +9,11 @@ from sqlalchemy import func, literal_column, select, true
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.deps import DB, CurrentUser, get_owned
-from app.models import Campaign, CampaignContact, Contact, ContactList, Event, Mailbox, Message, Sequence, Suppression, Template, list_contacts
+from app.models import Campaign, CampaignContact, Contact, ContactList, Event, Mailbox, Message, Sequence, Template, list_contacts
 from app.models.campaign import DEFAULT_SCHEDULE, DEFAULT_SETTINGS, LIVE_STATES
 from app.schemas import ORM
 from app.services import graph as g
-from app.services import limits, renderer
+from app.services import limits, outreach, renderer
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -156,18 +156,38 @@ async def _resolve_graph(db, user, c: Campaign) -> tuple[dict, list[str]]:
     return g.single_template_graph(c.template_ids), []
 
 
-async def _audience(db, user, c: Campaign) -> list[Contact]:
+def skips_contacted(c: Campaign) -> bool:
+    return bool((c.settings or {}).get("skip_contacted", True))
+
+
+async def _audience(db, user, c: Campaign) -> tuple[list[Contact], dict]:
+    """Sendable leads in the campaign's lists, plus how many were left out and why."""
+    excluded = {"unsubscribed": 0, "invalid": 0, "dnc": 0, "contacted": 0, "contacted_included": 0}
     if not c.list_ids:
-        return []
+        return [], excluded
     ids = [uuid.UUID(i) for i in c.list_ids]
-    suppressed = select(Suppression.email).where(Suppression.user_id == user.id)
     stmt = (
-        select(Contact).join(list_contacts, list_contacts.c.contact_id == Contact.id)
-        .where(list_contacts.c.list_id.in_(ids), Contact.user_id == user.id, Contact.unsubscribed.is_(False),
-               Contact.verify_status != "invalid", Contact.email.not_in(suppressed))
+        select(Contact, outreach.dnc_clause(user.id, Contact.email).label("dnc"),
+               outreach.contacted_clause(user.id, Contact.email, exclude_campaign=c.id).label("contacted"))
+        .join(list_contacts, list_contacts.c.contact_id == Contact.id)
+        .where(list_contacts.c.list_id.in_(ids), Contact.user_id == user.id)
         .distinct()
     )
-    return list((await db.execute(stmt)).scalars().all())
+    skip = skips_contacted(c)
+    out = []
+    for ct, dnc, contacted in (await db.execute(stmt)).all():
+        if ct.unsubscribed:
+            excluded["unsubscribed"] += 1
+        elif ct.verify_status == "invalid":
+            excluded["invalid"] += 1
+        elif dnc:
+            excluded["dnc"] += 1
+        elif contacted and skip:
+            excluded["contacted"] += 1
+        else:
+            excluded["contacted_included"] += bool(contacted)
+            out.append(ct)
+    return out, excluded
 
 
 @router.post("/{campaign_id}/preflight")
@@ -182,7 +202,7 @@ async def preflight(campaign_id: uuid.UUID, user: CurrentUser, db: DB):
     mbs = (await db.execute(select(Mailbox).where(Mailbox.id.in_([uuid.UUID(m) for m in c.mailbox_ids or []])))).scalars().all()
     if mbs and all(m.status != "active" for m in mbs):
         errors.append("None of the selected mailboxes are healthy")
-    contacts = await _audience(db, user, c)
+    contacts, excluded = await _audience(db, user, c)
     if c.list_ids and not contacts:
         errors.append("The selected lists have no sendable contacts")
 
@@ -205,6 +225,7 @@ async def preflight(campaign_id: uuid.UUID, user: CurrentUser, db: DB):
     return {
         "errors": errors,
         "audience": len(contacts),
+        "excluded": excluded,
         "variables": variables,
         "missing": [{"variable": k, "leads": n} for k, n in sorted(missing.items(), key=lambda x: -x[1])],
         "leads_missing": leads_missing,
@@ -229,7 +250,7 @@ async def launch(campaign_id: uuid.UUID, body: LaunchIn, user: CurrentUser, db: 
         c.graph_snapshot = graph
         templates = (await db.execute(select(Template).where(Template.id.in_([uuid.UUID(t) for t in g.template_ids_in(graph)])))).scalars().all()
         variables = sorted({v for t in templates for v in (t.variables or [])})
-        for ct in await _audience(db, user, c):
+        for ct in (await _audience(db, user, c))[0]:
             if body.missing_policy == "skip" and renderer.missing_variables(variables, renderer.contact_context(ct)):
                 continue
             await db.execute(insert(CampaignContact).values(

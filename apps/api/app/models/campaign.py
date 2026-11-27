@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,7 +12,8 @@ from app.database import Base, IdMixin, TimestampMixin
 # mode: "instant" sends any day/time until done; "window" only sends inside days + start–end (from start_at).
 # Campaigns saved before `mode` existed have no key and are treated as "window".
 DEFAULT_SCHEDULE = {"timezone": "UTC", "days": [0, 1, 2, 3, 4], "start": "09:00", "end": "17:00", "start_at": None}
-DEFAULT_SETTINGS = {"daily_cap": 200, "stop_on_reply": True}
+# skip_contacted: leave out leads that were already emailed (by another campaign or a one-off email).
+DEFAULT_SETTINGS = {"daily_cap": 200, "stop_on_reply": True, "skip_contacted": True}
 
 # Campaign-contact states that the engine still works on.
 LIVE_STATES = ("pending", "active", "waiting")
@@ -58,6 +59,8 @@ class CampaignContact(IdMixin, TimestampMixin, Base):
 
 class Message(IdMixin, Base):
     __tablename__ = "messages"
+    # "Have we emailed this address before?" lookups (contact history, import flags, skip-contacted).
+    __table_args__ = (Index("ix_messages_user_to_email", "user_id", "to_email"),)
 
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     campaign_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campaigns.id", ondelete="CASCADE"), index=True)

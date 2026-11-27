@@ -53,6 +53,8 @@ class Mailbox(IdMixin, TimestampMixin, Base):
 
     warmup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     warmup: Mapped[dict] = mapped_column(JSONB, default=lambda: dict(DEFAULT_WARMUP))
+    # When warmup was last switched on — day 1 of the ramp-up schedule.
+    warmup_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     status: Mapped[str] = mapped_column(String(20), default="active")  # active | error | paused
     last_error: Mapped[str | None] = mapped_column(Text)

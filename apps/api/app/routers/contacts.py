@@ -11,10 +11,10 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.deps import DB, CurrentUser, get_owned
-from app.models import Contact, ContactList, SiteResearch, Suppression, list_contacts
+from app.models import Campaign, Contact, ContactList, Event, Mailbox, Message, SiteResearch, Suppression, Template, list_contacts
 from app.models.contact import STANDARD_FIELDS
 from app.schemas import ORM
-from app.services import limits
+from app.services import graph, limits, outreach
 from app.services.renderer import ALIASES, norm_key
 from app.services.research import ENRICH_FIELDS
 
@@ -62,6 +62,16 @@ class ContactOut(ORM):
     unsubscribed: bool
     research_domain: str | None = None
     created_at: datetime
+    # Filled per page: the do-not-contact entry blocking this address, and what we've sent it so far.
+    dnc: dict | None = None
+    history: dict | None = None
+
+
+async def annotate(db, user_id, contacts) -> list[ContactOut]:
+    emails = [c.email for c in contacts]
+    dnc, hist = await outreach.dnc_entries(db, user_id, emails), await outreach.history(db, user_id, emails)
+    return [ContactOut.model_validate(c).model_copy(update={"dnc": dnc.get(c.email), "history": hist.get(c.email)})
+            for c in contacts]
 
 
 class ContactIn(BaseModel):
@@ -135,6 +145,7 @@ async def import_csv(
     list_id: uuid.UUID, user: CurrentUser, db: DB,
     file: UploadFile = File(...),
     mapping: str = Form("{}", description='Optional JSON {"CSV Header": "first_name" | "custom name" | ""}'),
+    skip_dnc: bool = Form(True, description="Leave out addresses on the do-not-contact list (by address or domain)"),
 ):
     lst = await get_owned(db, ContactList, list_id, user)
     raw = await file.read()
@@ -154,7 +165,8 @@ async def import_csv(
 
     remaining = await limits.contacts_remaining(db, user)
     suppressed = set((await db.execute(select(Suppression.email).where(Suppression.user_id == user.id))).scalars())
-    stats = {"rows": 0, "imported": 0, "updated": 0, "invalid": 0, "duplicates": 0, "suppressed": 0, "over_limit": 0}
+    stats = {"rows": 0, "imported": 0, "updated": 0, "invalid": 0, "duplicates": 0, "suppressed": 0, "over_limit": 0,
+             "previously_contacted": 0}
     custom_cols: set[str] = set(lst.columns or [])
     seen: set[str] = set()
 
@@ -178,8 +190,10 @@ async def import_csv(
             stats["duplicates"] += 1
             continue
         seen.add(email)
-        if email in suppressed:
+        if email in suppressed or outreach.domain_key(email) in suppressed:
             stats["suppressed"] += 1
+            if skip_dnc:
+                continue
         values["email"] = email
         existing = (await db.execute(select(Contact).where(Contact.user_id == user.id, Contact.email == email))).scalar_one_or_none()
         if existing:
@@ -204,7 +218,15 @@ async def import_csv(
     lst.columns = sorted(custom_cols)
     lst.source = "csv" if lst.source == "manual" else lst.source
     await db.commit()
-    return {**stats, "columns": col_map}
+
+    # Flag, right in the import result, every row we must not email or have emailed before.
+    dnc = await outreach.dnc_entries(db, user.id, seen)
+    hist = await outreach.history(db, user.id, seen)
+    stats["previously_contacted"] = len(hist)
+    flagged = [{"email": e, "dnc": dnc.get(e), "history": hist.get(e), "skipped": skip_dnc and e in dnc}
+               for e in sorted(set(dnc) | set(hist))]
+    flagged.sort(key=lambda f: (f["dnc"] is None, -(f["history"] or {}).get("sent", 0), f["email"]))
+    return {**stats, "skip_dnc": skip_dnc, "flagged": flagged[:500], "flagged_total": len(flagged), "columns": col_map}
 
 
 @router.post("/lists/{list_id}/preview-headers")
@@ -229,6 +251,8 @@ async def get_contacts(
     list_id: uuid.UUID | None = None, q: str = "", status_filter: str = Query("", alias="status"),
     page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=500),
     research: str = Query("", pattern="^(|none|done|pending|failed)$", description="Filter by website research state"),
+    contacted: str = Query("", pattern="^(|yes|no)$", description="Only leads we have (yes) / haven't (no) emailed"),
+    dnc: str = Query("", pattern="^(|yes|no)$", description="Only leads on (yes) / off (no) the do-not-contact list"),
 ):
     stmt = select(Contact).where(Contact.user_id == user.id)
     if research:
@@ -246,9 +270,68 @@ async def get_contacts(
                               func.lower(Contact.last_name).like(like), func.lower(Contact.company).like(like)))
     if status_filter:
         stmt = stmt.where(Contact.verify_status == status_filter)
+    if contacted:
+        cond = outreach.contacted_clause(user.id, Contact.email)
+        stmt = stmt.where(cond if contacted == "yes" else ~cond)
+    if dnc:
+        cond = outreach.dnc_clause(user.id, Contact.email)
+        stmt = stmt.where(cond if dnc == "yes" else ~cond)
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (await db.execute(stmt.order_by(Contact.created_at.desc()).offset((page - 1) * size).limit(size))).scalars().all()
-    return {"total": total, "items": [ContactOut.model_validate(c) for c in rows]}
+    return {"total": total, "items": await annotate(db, user.id, rows)}
+
+
+@router.get("/contacts/summary")
+async def contacts_summary(user: CurrentUser, db: DB):
+    """Counts for the Contacts tab filter chips."""
+    base = select(func.count()).select_from(Contact).where(Contact.user_id == user.id)
+    total = (await db.execute(base)).scalar_one()
+    contacted = (await db.execute(base.where(outreach.contacted_clause(user.id, Contact.email)))).scalar_one()
+    dnc = (await db.execute(base.where(outreach.dnc_clause(user.id, Contact.email)))).scalar_one()
+    entries = (await db.execute(select(func.count()).select_from(Suppression).where(Suppression.user_id == user.id))).scalar_one()
+    return {"total": total, "contacted": contacted, "never_contacted": total - contacted, "dnc": dnc, "dnc_entries": entries}
+
+
+@router.get("/contacts/{contact_id}/history")
+async def contact_history(contact_id: uuid.UUID, user: CurrentUser, db: DB):
+    """Every email sent to this lead: campaign, step, mailbox, and what they did with it (opens, clicked links, reply)."""
+    c = await get_owned(db, Contact, contact_id, user)
+    rows = (await db.execute(
+        select(Message, Campaign, Mailbox.email, Template.name)
+        .outerjoin(Campaign, Campaign.id == Message.campaign_id)
+        .outerjoin(Mailbox, Mailbox.id == Message.mailbox_id)
+        .outerjoin(Template, Template.id == Message.template_id)
+        .where(Message.user_id == user.id, Message.to_email == c.email).order_by(Message.sent_at.desc())
+    )).all()
+    clicks = await human_clicks(db, [m.id for m, *_ in rows])
+    graphs: dict = {}
+    messages = []
+    for m, camp, mb, tname in rows:
+        stage = None
+        if camp:
+            stage = {**graph.stage_of(graphs.setdefault(camp.id, graph.campaign_graph(camp)), m.node_id), "template": tname}
+        messages.append({
+            "id": m.id, "subject": m.subject, "status": m.status, "error": m.error, "sent_at": m.sent_at, "mailbox": mb,
+            "campaign": camp.name if camp else None, "campaign_id": camp.id if camp else None,
+            "campaign_kind": camp.kind if camp else None, "stage": stage, "template": tname,
+            "opened_at": m.opened_at, "open_count": m.open_count, "clicked_at": m.clicked_at, "click_count": m.click_count,
+            "clicks": clicks.get(m.id, []), "replied_at": m.replied_at, "reply": m.reply_snippet,
+        })
+    out = (await annotate(db, user.id, [c]))[0]
+    return {"contact": out, "messages": messages}
+
+
+async def human_clicks(db, message_ids: list) -> dict:
+    """message id → [{url, at}] for link clicks by people (security scanners click every link on delivery)."""
+    out: dict = {}
+    if not message_ids:
+        return out
+    for ev in (await db.execute(
+        select(Event).where(Event.message_id.in_(message_ids), Event.kind == "click").order_by(Event.created_at)
+    )).scalars():
+        if not (ev.meta or {}).get("machine"):
+            out.setdefault(ev.message_id, []).append({"url": ev.url, "at": ev.created_at})
+    return out
 
 
 @router.post("/contacts", response_model=ContactOut, status_code=201)
@@ -301,27 +384,58 @@ async def variables(user: CurrentUser, db: DB):
 # ── Suppression list ───────────────────────────────────────────
 
 class SuppressIn(BaseModel):
+    """Addresses ("a@x.com") or whole domains ("x.com", "@x.com"), e.g. pasted one per line."""
     emails: list[str]
-    reason: str = "manual"
+    note: str = ""
 
 
 @router.get("/suppressions")
-async def list_suppressions(user: CurrentUser, db: DB, q: str = ""):
+async def list_suppressions(
+    user: CurrentUser, db: DB, q: str = "", reason: str = Query("", pattern="^(|manual|unsubscribed|bounced|complained)$"),
+    kind: str = Query("", pattern="^(|email|domain)$"), page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=500),
+):
+    """The do-not-contact list, newest first."""
     stmt = select(Suppression).where(Suppression.user_id == user.id)
     if q:
-        stmt = stmt.where(Suppression.email.like(f"%{q.lower()}%"))
-    rows = (await db.execute(stmt.order_by(Suppression.created_at.desc()).limit(1000))).scalars().all()
-    return [{"email": s.email, "reason": s.reason, "created_at": s.created_at} for s in rows]
+        stmt = stmt.where(or_(Suppression.email.like(f"%{q.lower()}%"), func.lower(Suppression.note).like(f"%{q.lower()}%")))
+    if reason:
+        stmt = stmt.where(Suppression.reason == reason)
+    if kind:
+        stmt = stmt.where(Suppression.email.startswith("@") if kind == "domain" else ~Suppression.email.startswith("@"))
+    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    counts = dict((await db.execute(
+        select(Suppression.reason, func.count()).where(Suppression.user_id == user.id).group_by(Suppression.reason)
+    )).all())
+    rows = (await db.execute(stmt.order_by(Suppression.created_at.desc()).offset((page - 1) * size).limit(size))).scalars().all()
+    return {"total": total, "counts": counts, "items": [
+        {"email": s.email, "is_domain": s.email.startswith("@"), "reason": s.reason,
+         "label": outreach.REASON_LABELS.get(s.reason, s.reason), "note": s.note or "", "created_at": s.created_at}
+        for s in rows]}
 
 
-@router.post("/suppressions", status_code=204)
+@router.post("/suppressions")
 async def add_suppressions(body: SuppressIn, user: CurrentUser, db: DB):
-    for e in {e.strip().lower() for e in body.emails if EMAIL_RE.match(e.strip())}:
-        await db.execute(insert(Suppression).values(user_id=user.id, email=e, reason=body.reason).on_conflict_do_nothing())
+    entries, invalid = set(), []
+    for raw in body.emails:
+        e = outreach.normalize_entry(raw)
+        if e:
+            entries.add(e)
+        elif raw.strip():
+            invalid.append(raw.strip()[:200])
+    added = 0
+    for e in sorted(entries):
+        res = await db.execute(insert(Suppression).values(user_id=user.id, email=e, reason="manual", note=body.note[:500])
+                               .on_conflict_do_nothing())
+        added += res.rowcount or 0
     await db.commit()
+    return {"added": added, "already_listed": len(entries) - added, "invalid": invalid[:50]}
 
 
 @router.delete("/suppressions/{email}", status_code=204)
 async def remove_suppression(email: str, user: CurrentUser, db: DB):
-    await db.execute(delete(Suppression).where(Suppression.user_id == user.id, Suppression.email == email.lower()))
+    e = email.strip().lower()
+    await db.execute(delete(Suppression).where(Suppression.user_id == user.id, Suppression.email == e))
+    if not e.startswith("@"):  # an unsubscribe also flags the contact — taking them off the list clears that too
+        for c in (await db.execute(select(Contact).where(Contact.user_id == user.id, Contact.email == e))).scalars():
+            c.unsubscribed = False
     await db.commit()
